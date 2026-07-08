@@ -164,10 +164,11 @@ class _EngineThread(QThread):
             self.error_occurred.emit("", str(exc))
         finally:
             # Session'ı kapat (TCP bağlantılarını temizle)
-            try:
-                loop.run_until_complete(self._client.close())
-            except Exception:
-                pass
+            if not loop.is_closed():
+                try:
+                    loop.run_until_complete(self._client.close())
+                except Exception:
+                    pass
             loop.close()
             self.all_finished.emit()
 

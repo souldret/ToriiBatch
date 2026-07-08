@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
 
         self._sm = SettingsManager()
         self._sm.load()
+        self._sm.save_failed.connect(self._on_save_failed)
 
         self._engine = TranslatorEngine(self._sm, self)
 
@@ -1041,13 +1042,10 @@ class MainWindow(QMainWindow):
                 url = "https://api.toriitranslate.com/api/credits"
                 headers = {"Authorization": f"Bearer {api_key}"}
                 timeout = aiohttp.ClientTimeout(total=15, connect=8)
-                connector = aiohttp.TCPConnector()
                 try:
-                    async with aiohttp.ClientSession(
-                        connector=connector,
-                        connector_owner=True,
-                        timeout=timeout,
-                    ) as session:
+                    # connector_owner=True (varsayılan) — session kapanınca
+                    # connector da otomatik kapanır, ayrıca close() gerekmez
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.get(url, headers=headers) as resp:
                             if resp.status == 200:
                                 body = await resp.json(content_type=None)
@@ -1055,9 +1053,6 @@ class MainWindow(QMainWindow):
                                     return float(body.get("credits", 0))
                 except Exception as exc:
                     logger.warning("Kredi yenileme hatası: %s", exc)
-                finally:
-                    if not connector.closed:
-                        await connector.close()
                 return None
 
             loop = asyncio.new_event_loop()
@@ -1112,6 +1107,16 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Kapatma olayı
     # ------------------------------------------------------------------
+
+    @pyqtSlot(str)
+    def _on_save_failed(self, error: str) -> None:
+        """Ayarlar diske yazılamadığında kullanıcıya bildir."""
+        QMessageBox.critical(
+            self,
+            "Kaydetme Hatası",
+            f"Ayarlar diske kaydedilemedi:\n{error}\n\n"
+            "Uygulama çalışmaya devam eder ancak ayarlar kalıcı olmayabilir.",
+        )
 
     def closeEvent(self, event: QCloseEvent) -> None:
         if self._engine.is_running():

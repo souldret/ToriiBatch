@@ -149,6 +149,7 @@ class SettingsManager(QObject):
     """
 
     settings_changed = pyqtSignal(dict)
+    save_failed      = pyqtSignal(str)   # Disk yazma hatası — hata mesajı
     """Herhangi bir ayar değiştiğinde tüm ayar sözlüğü ile yayınlanır."""
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -223,8 +224,9 @@ class SettingsManager(QObject):
         self._ensure_config_dir()
         try:
             self._write_to_disk(self._config, encrypt_sensitive=True)
-        except OSError:
-            # Disk yazma hatası — settings_changed emit edilmez
+        except OSError as exc:
+            # Disk yazma hatası — settings_changed emit edilmez, hata bildirilir
+            self.save_failed.emit(str(exc))
             return
         self.settings_changed.emit(dict(self._config))
         logger.info("Ayarlar kaydedildi: %s", self._config_path)

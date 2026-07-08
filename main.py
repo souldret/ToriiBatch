@@ -117,9 +117,8 @@ def _setup_logging() -> Path:
     # Gürültülü üçüncü taraf kütüphaneleri kıs
     for noisy in ("aiohttp", "urllib3", "PIL", "cryptography"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
-    # asyncio'nun "Unclosed client session" uyarıları ERROR seviyesinde gelir;
-    # bunlar aiohttp'ın GC sırasında ürettiği teknik uyarılar — kritik değil
-    logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+    # asyncio logları WARNING seviyesinde — gerçek hataları gizlemez
+    logging.getLogger("asyncio").setLevel(logging.WARNING)
 
     logger = logging.getLogger(__name__)
     logger.info("Logging başlatıldı. Log dosyası: %s", log_file)

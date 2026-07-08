@@ -255,7 +255,12 @@ class ToriiAPIClient:
                     logger.warning("Beklenmeyen HTTP %d: %s", status, body_text[:200])
                     return status, None, resp_headers
 
-            except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
+            except (
+                aiohttp.ClientConnectionError,
+                aiohttp.ServerDisconnectedError,
+                aiohttp.ClientPayloadError,
+                asyncio.TimeoutError,
+            ) as exc:
                 net_attempt += 1
                 # Bağlantı hatasında session bozulmuş olabilir — sıfırla
                 await self.close()
