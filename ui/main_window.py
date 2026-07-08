@@ -894,15 +894,19 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_credits_updated(self, credits: float) -> None:
-        # Sayfa başına ortalama maliyet öğren
+        # Sayfa başına ortalama maliyet öğren.
+        # API her sayfa sonunda bir güncelleme gönderir; harcanan miktar
+        # (prev - credits) o sayfanın maliyetidir.
         prev = self._credits_badge.credits
-        if prev is not None and self._done_pages > 0:
+        if prev is not None and credits < prev:
             spent = prev - credits
-            if spent > 0:
-                # Eksponansiyel hareketli ortalama (EMA) ile öğren
-                alpha = 0.3
-                old_avg = getattr(self, "_avg_cost_per_page", spent)
-                self._avg_cost_per_page = alpha * spent + (1 - alpha) * old_avg
+            if 0 < spent < 100:  # mantıksız büyük değerleri filtrele
+                old_avg = getattr(self, "_avg_cost_per_page", None)
+                if old_avg is None:
+                    self._avg_cost_per_page = spent
+                else:
+                    alpha = 0.3
+                    self._avg_cost_per_page = alpha * spent + (1 - alpha) * old_avg
         self._credits_badge.update_credits(credits)
 
     @pyqtSlot(str, str, str)
