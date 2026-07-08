@@ -1,0 +1,6 @@
+PyQt6
+requests
+aiohttp
+natsort
+cryptography
+qtawesome>=1.4,<2
