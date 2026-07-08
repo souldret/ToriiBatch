@@ -110,7 +110,7 @@ class _EngineThread(QThread):
     log_message       = pyqtSignal(str, str)          # (seviye, mesaj)
     credits_updated   = pyqtSignal(float)
     all_finished      = pyqtSignal()
-    error_occurred    = pyqtSignal(str, str)          # (bölüm, hata)
+    error_occurred    = pyqtSignal(str, str, str)     # (bölüm, hata, kaynak_yol)
 
     def __init__(
         self,
@@ -161,7 +161,7 @@ class _EngineThread(QThread):
             loop.run_until_complete(self._run_batch())
         except Exception as exc:
             logger.exception("EngineThread beklenmedik hata: %s", exc)
-            self.error_occurred.emit("", str(exc))
+            self.error_occurred.emit("", str(exc), "")
         finally:
             # Session'ı kapat (TCP bağlantılarını temizle)
             if not loop.is_closed():
@@ -291,6 +291,7 @@ class _EngineThread(QThread):
                 self.error_occurred.emit(
                     chapter.name,
                     result.error or "Bilinmeyen hata",
+                    str(result.source_path),
                 )
 
                 # Üst üste 3 hata → bölümü atla
@@ -537,7 +538,7 @@ class TranslatorEngine(QObject):
     log_message      = pyqtSignal(str, str)          # (seviye, mesaj)
     credits_updated  = pyqtSignal(float)
     all_finished     = pyqtSignal()
-    error_occurred   = pyqtSignal(str, str)          # (bölüm, hata)
+    error_occurred   = pyqtSignal(str, str, str)     # (bölüm, hata, kaynak_yol)
 
     # --- Geriye dönük uyumluluk sinyalleri (main_window.py bağlantıları için) ---
     chapter_done     = pyqtSignal(str, bool)         # chapter_finished ile aynı

@@ -200,6 +200,9 @@ class MainWindow(QMainWindow):
         self._done_chapters: int = 0
         self._total_chapters: int = 0
 
+        # Hatalı sayfaları yeniden denemek için: chapter_name → [source_path, ...]
+        self._failed_page_paths: dict[str, list[str]] = {}
+
         self._setup_window()
         self._build_ui()
         self._connect_engine_signals()
@@ -763,11 +766,34 @@ class MainWindow(QMainWindow):
             selected = filtered
 
         # Sayaçları sıfırla
-        self._done_pages    = 0
-        self._failed_pages  = 0
-        self._done_chapters = 0
-        self._total_chapters = len(selected)
+        self._done_pages         = 0
+        self._failed_pages       = 0
+        self._done_chapters      = 0
+        self._total_chapters     = len(selected)
+        self._failed_page_paths  = {}   # önceki hatalar temizlenir
         total_pages = sum(c.page_count for c in selected)
+
+        # Kredi tahmini — mevcut bakiye biliniyorsa yeterlilik kontrolü
+        current_credits = self._credits_badge.credits
+        if current_credits is not None and current_credits > 0:
+            # Sayfa başına tahmini maliyet (_cost_per_page öğrenilmişse kullan,
+            # yoksa varsayılan 1.0 kredi/sayfa ile tahmin et)
+            cost_per = getattr(self, "_avg_cost_per_page", 1.0)
+            estimated_cost = total_pages * cost_per
+            if estimated_cost > current_credits:
+                pages_possible = int(current_credits / cost_per)
+                reply = QMessageBox.warning(
+                    self,
+                    "Yetersiz Kredi",
+                    f"Tahmini maliyet: {estimated_cost:.1f} kredi\n"
+                    f"Mevcut bakiye: {current_credits:.2f} kredi\n\n"
+                    f"Kredi yaklaşık {pages_possible} sayfa için yeterli.\n"
+                    "Yine de başlamak istiyor musunuz?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
+                if reply != QMessageBox.StandardButton.Yes:
+                    return
 
         self._stat_total.set_value(str(total_pages))
         self._stat_done.set_value("0")
@@ -868,13 +894,27 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(float)
     def _on_credits_updated(self, credits: float) -> None:
+        # Sayfa başına ortalama maliyet öğren
+        prev = self._credits_badge.credits
+        if prev is not None and self._done_pages > 0:
+            spent = prev - credits
+            if spent > 0:
+                # Eksponansiyel hareketli ortalama (EMA) ile öğren
+                alpha = 0.3
+                old_avg = getattr(self, "_avg_cost_per_page", spent)
+                self._avg_cost_per_page = alpha * spent + (1 - alpha) * old_avg
         self._credits_badge.update_credits(credits)
 
-    @pyqtSlot(str, str)
-    def _on_error_occurred(self, chapter_name: str, error: str) -> None:
+    @pyqtSlot(str, str, str)
+    def _on_error_occurred(self, chapter_name: str, error: str, source_path: str) -> None:
         self._failed_pages += 1
         self._stat_failed.set_value(str(self._failed_pages))
         logger.warning("[%s] Hata: %s", chapter_name, error)
+        # Yeniden deneme için hatalı sayfa yolunu kaydet
+        if source_path:
+            if chapter_name not in self._failed_page_paths:
+                self._failed_page_paths[chapter_name] = []
+            self._failed_page_paths[chapter_name].append(source_path)
 
     @pyqtSlot()
     def _on_all_finished(self) -> None:
@@ -910,12 +950,86 @@ class MainWindow(QMainWindow):
         else:
             self._toast.show_message(
                 f"{max(0, success)} başarılı, {self._failed_pages} hatalı. "
-                "Detaylar için log'a bakın.",
+                "Hataları yeniden denemek için butona tıklayın.",
                 icon="warning",
-                action_label="Klasörü Aç",
-                action_callback=_open_output,
-                duration_ms=10000,
+                action_label="Yeniden Dene",
+                action_callback=self._retry_failed_pages,
+                duration_ms=15000,
             )
+
+    @pyqtSlot()
+    def _retry_failed_pages(self) -> None:
+        """
+        Hatalı sayfaları yeniden dene.
+
+        `_failed_page_paths` (chapter_name → [source_path, ...]) sözlüğünden
+        orijinal ChapterInfo nesnelerini klonlayıp yalnızca hatalı sayfaları
+        içerecek şekilde image_paths listesini kısaltır ve engine'e gönderir.
+        """
+        if not self._failed_page_paths:
+            return
+
+        output = self._sm.get("output_folder", "")
+        source_root = self._sm.get("source_folder", "")
+        if not output:
+            QMessageBox.warning(self, "Uyarı", "Çıktı klasörü belirtilmemiş.")
+            return
+
+        # Hatalı sayfaları içeren sahte ChapterInfo listesi oluştur
+        retry_chapters: list[ChapterInfo] = []
+        chapter_map = {ch.name: ch for ch in self._chapters}
+
+        for chapter_name, failed_paths in self._failed_page_paths.items():
+            original = chapter_map.get(chapter_name)
+            if original is None:
+                continue
+            # Sadece hatalı sayfaları içeren yeni bir ChapterInfo oluştur
+            retry_ch = ChapterInfo(
+                name=original.name,
+                path=original.path,
+                image_paths=list(dict.fromkeys(failed_paths)),  # tekrar sırasızı kaldır
+                page_count=len(dict.fromkeys(failed_paths)),
+                status="pending",
+            )
+            retry_chapters.append(retry_ch)
+
+        if not retry_chapters:
+            return
+
+        total_retry = sum(c.page_count for c in retry_chapters)
+        reply = QMessageBox.question(
+            self,
+            "Yeniden Dene",
+            f"{self._failed_pages} hatalı sayfa ({total_retry} benzersiz) yeniden çevrilecek.\nDevam edilsin mi?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        # Sayaçları yeniden dene moduna al
+        self._done_pages        = 0
+        self._failed_pages      = 0
+        self._done_chapters     = 0
+        self._total_chapters    = len(retry_chapters)
+        self._failed_page_paths = {}
+
+        self._main_progress.setRange(0, total_retry)
+        self._main_progress.setValue(0)
+        self._stat_done.set_value("0")
+        self._stat_failed.set_value("0")
+        self._stat_total.set_value(str(total_retry))
+        self._progress_lbl.setText(
+            f"Genel İlerleme: 0/{total_retry} sayfa — Bölüm 0/{self._total_chapters}"
+        )
+        self._log_view.append_log(
+            "info",
+            f"Yeniden deneme başlatılıyor — {total_retry} hatalı sayfa.",
+        )
+
+        self._set_running_state(True)
+        settings = dict(self._sm.all()) if hasattr(self._sm, "all") else {}
+        settings["source_folder"] = source_root
+        self._engine.start_batch(retry_chapters, settings, output)
 
     # ------------------------------------------------------------------
     # Yardımcı metodlar
@@ -1042,23 +1156,35 @@ class MainWindow(QMainWindow):
                 url = "https://api.toriitranslate.com/api/credits"
                 headers = {"Authorization": f"Bearer {api_key}"}
                 timeout = aiohttp.ClientTimeout(total=15, connect=8)
+                connector = aiohttp.TCPConnector()
                 try:
-                    # connector_owner=True (varsayılan) — session kapanınca
-                    # connector da otomatik kapanır, ayrıca close() gerekmez
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
+                    async with aiohttp.ClientSession(
+                        connector=connector,
+                        connector_owner=False,  # connector'ı kendimiz kapatacağız
+                        timeout=timeout,
+                    ) as session:
                         async with session.get(url, headers=headers) as resp:
                             if resp.status == 200:
                                 body = await resp.json(content_type=None)
                                 if isinstance(body, dict):
                                     return float(body.get("credits", 0))
+                    return None
                 except Exception as exc:
                     logger.warning("Kredi yenileme hatası: %s", exc)
-                return None
+                    return None
+                finally:
+                    # connector'ı garantili kapat, loop kapanmadan önce
+                    await connector.close()
 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            credits = None
             try:
                 credits = loop.run_until_complete(_run())
+                # Bekleyen async generator'ları temizle
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception as exc:
+                logger.warning("Kredi yenileme loop hatası: %s", exc)
             finally:
                 loop.close()
 
