@@ -72,13 +72,12 @@ class ToriiAPIClient:
         self._byok_key = byok_key
         self._byok_local_url = byok_local_url
 
-        # Client seviyesi rate limit mekanizması
-        self._rate_lock = asyncio.Lock()
+        self._rate_lock: asyncio.Lock | None = None
         self._last_request_time: float = 0.0
 
         # Paylaşımlı session — ilk istekte oluşturulur (lazy init)
         self._session: aiohttp.ClientSession | None = None
-        self._session_lock = asyncio.Lock()
+        self._session_lock: asyncio.Lock | None = None
 
     # ------------------------------------------------------------------
     # Session yönetimi
@@ -93,6 +92,8 @@ class ToriiAPIClient:
           pratikte 1 yeterli, ancak retry/timeout senaryoları için tolerans)
         - keepalive_timeout=30: boşta bağlantıyı 30 sn açık tutar
         """
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
         async with self._session_lock:
             if self._session is None or self._session.closed:
                 connector = aiohttp.TCPConnector(
@@ -110,6 +111,8 @@ class ToriiAPIClient:
 
     async def close(self) -> None:
         """Session ve bağlantıları kapatır. İşlem bitişinde çağrılmalıdır."""
+        if self._session_lock is None:
+            self._session_lock = asyncio.Lock()
         async with self._session_lock:
             if self._session and not self._session.closed:
                 await self._session.close()
@@ -142,6 +145,8 @@ class ToriiAPIClient:
         Zaman damgası sleep BİTİŞİNDE güncellenir — böylece gerçek aralık
         her zaman tam olarak _MIN_REQUEST_INTERVAL olur, daha fazla değil.
         """
+        if self._rate_lock is None:
+            self._rate_lock = asyncio.Lock()
         async with self._rate_lock:
             now = time.monotonic()
             elapsed = now - self._last_request_time

@@ -34,6 +34,8 @@ from PyQt6.QtWidgets import (
     QStatusBar,
     QVBoxLayout,
     QWidget,
+    QMenu,
+    QSystemTrayIcon,
 )
 
 from core.file_scanner import (
@@ -54,6 +56,8 @@ from ui.widgets import (
     LogView,
     StatCard,
 )
+from core.history_manager import HistoryManager
+from ui.history_dialog import HistoryDialog
 
 logger = logging.getLogger(__name__)
 
@@ -203,11 +207,21 @@ class MainWindow(QMainWindow):
         # Hatalı sayfaları yeniden denemek için: chapter_name → [source_path, ...]
         self._failed_page_paths: dict[str, list[str]] = {}
 
+
+        # Geçmiş yöneticisi
+        self._history = HistoryManager()
+
+        # Oturum izleme
+        self._session_started_at: float = 0.0
+        self._session_start_credits: float | None = None
+
         self._setup_window()
         self._build_ui()
         self._connect_engine_signals()
         self._build_menu()
         self._restore_state()
+        self._setup_tray()
+        self._check_for_updates()
 
     # ------------------------------------------------------------------
     # Pencere ayarları
@@ -733,6 +747,11 @@ class MainWindow(QMainWindow):
 
         acreds = QAction(make_icon("fa5s.sync-alt"), "Kredi Bakiyesini Yenile", self)
         acreds.triggered.connect(self._refresh_credits)
+
+        tm.addSeparator()
+        ahist = QAction(make_icon("fa5s.history"), "Geçmiş…", self)
+        ahist.triggered.connect(self._open_history)
+        tm.addAction(ahist)
         tm.addAction(acreds)
 
     # ------------------------------------------------------------------
@@ -885,6 +904,10 @@ class MainWindow(QMainWindow):
         self._set_running_state(True)
         settings = dict(self._sm.all()) if hasattr(self._sm, "all") else {}
         settings["source_folder"] = source_root
+        # Oturum başlangıcını kaydet
+        import time as _time
+        self._session_started_at = _time.time()
+        self._session_start_credits = self._credits_badge.credits
         self._engine.start_batch(selected, settings, output)
 
     @pyqtSlot()
@@ -1034,6 +1057,41 @@ class MainWindow(QMainWindow):
                 action_label="Yeniden Dene",
                 action_callback=self._retry_failed_pages,
                 duration_ms=15000,
+            )
+
+
+        # --- Oturumu geçmişe kaydet ---
+        import time as _time_import
+        ended_at = _time_import.time()
+        started_at = getattr(self, "_session_started_at", ended_at)
+        start_credits = getattr(self, "_session_start_credits", None)
+        current_credits = self._credits_badge.credits
+        credits_spent = 0.0
+        if start_credits is not None and current_credits is not None:
+            credits_spent = max(0.0, start_credits - current_credits)
+        self._history.add_session(
+            started_at=started_at,
+            ended_at=ended_at,
+            source_folder=self._sm.get("source_folder", ""),
+            output_folder=self._sm.get("output_folder", ""),
+            total_pages=self._done_pages,
+            successful_pages=max(0, self._done_pages - self._failed_pages),
+            failed_pages=self._failed_pages,
+            total_chapters=self._total_chapters,
+            credits_spent=credits_spent,
+            translator=self._sm.get("translator", ""),
+        )
+
+        # --- Sistem tepsisi bildirimi ---
+        if hasattr(self, "_tray") and self._tray is not None and not self.isVisible():
+            msg = f"Çeviri tamamlandı! {max(0, self._done_pages - self._failed_pages)} başarılı"
+            if self._failed_pages > 0:
+                msg += f", {self._failed_pages} hatalı"
+            self._tray.showMessage(
+                "ToriiBatch",
+                msg,
+                __import__("PyQt6.QtWidgets", fromlist=["QSystemTrayIcon"]).QSystemTrayIcon.MessageIcon.Information,
+                5000,
             )
 
     @pyqtSlot()
@@ -1338,3 +1396,136 @@ class MainWindow(QMainWindow):
 
         self._sm.save()
         event.accept()
+
+    # ------------------------------------------------------------------
+    # Sistem Tepsisi
+    # ------------------------------------------------------------------
+
+    def _setup_tray(self) -> None:
+        """Sistem tepsisi ikonunu ve menüsünü oluşturur."""
+        from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
+        from PyQt6.QtGui import QIcon
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray = None
+            return
+        self._tray = QSystemTrayIcon(self)
+        if _ICON_PATH.exists():
+            self._tray.setIcon(QIcon(str(_ICON_PATH)))
+        else:
+            self._tray.setIcon(self.style().standardIcon(
+                __import__("PyQt6.QtWidgets", fromlist=["QStyle"]).QStyle.StandardPixmap.SP_ComputerIcon
+            ))
+        self._tray.setToolTip("ToriiBatch")
+
+        tray_menu = QMenu()
+        tray_menu.setStyleSheet(
+            f"QMenu {{ background-color: #1e1e2e; color: #cdd6f4; border: 1px solid #313244; }}"
+            f"QMenu::item:selected {{ background-color: #7c3aed; }}"
+        )
+        show_action = tray_menu.addAction("Göster")
+        show_action.triggered.connect(self._tray_show)
+        tray_menu.addSeparator()
+        quit_action = tray_menu.addAction("Çıkış")
+        quit_action.triggered.connect(self._tray_quit)
+
+        self._tray.setContextMenu(tray_menu)
+        self._tray.activated.connect(self._on_tray_activated)
+        self._tray.show()
+
+    def _tray_show(self) -> None:
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _tray_quit(self) -> None:
+        self._tray_force_quit = True
+        self.close()
+
+    def _on_tray_activated(self, reason) -> None:
+        from PyQt6.QtWidgets import QSystemTrayIcon
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self._tray_show()
+
+    def closeEvent(self, event: "QCloseEvent") -> None:
+        """Motor çalışırken onay iste; tray varsa minimize et, yoksa kapat."""
+        force_quit = getattr(self, "_tray_force_quit", False)
+        tray_available = hasattr(self, "_tray") and self._tray is not None
+
+        # Motor çalışıyorsa onay iste
+        if self._engine.is_running() and not force_quit:
+            reply = QMessageBox.question(
+                self, "Çıkış",
+                "Çeviri devam ediyor. Çıkmak istiyor musunuz?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            self._engine.cancel()
+
+        # Tray varsa minimize et (force_quit değilse)
+        if tray_available and not force_quit:
+            event.ignore()
+            self.hide()
+            self._tray.showMessage(
+                "ToriiBatch",
+                "Uygulama arka planda çalışmaya devam ediyor.",
+                __import__("PyQt6.QtWidgets", fromlist=["QSystemTrayIcon"]).QSystemTrayIcon.MessageIcon.Information,
+                3000,
+            )
+            return
+
+        # Geçmiş DB'yi kapat
+        if hasattr(self, "_history"):
+            self._history.close()
+
+        event.accept()
+
+    # ------------------------------------------------------------------
+    # Geçmiş penceresi
+    # ------------------------------------------------------------------
+
+    def _open_history(self) -> None:
+        dlg = HistoryDialog(self._history, self)
+        dlg.exec()
+
+    # ------------------------------------------------------------------
+    # Güncelleme kontrolü
+    # ------------------------------------------------------------------
+
+    def _check_for_updates(self) -> None:
+        """Arka planda GitHub releases API'sini kontrol eder."""
+        import threading
+        threading.Thread(target=self._fetch_latest_release, daemon=True).start()
+
+    def _fetch_latest_release(self) -> None:
+        import urllib.request
+        import json as _json
+        import logging as _log
+        _logger = _log.getLogger(__name__)
+        try:
+            url = "https://api.github.com/repos/souldret/ToriiBatch/releases/latest"
+            req = urllib.request.Request(url, headers={"User-Agent": "ToriiBatch/1.0"})
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = _json.loads(resp.read().decode())
+            tag = data.get("tag_name", "")
+            name = data.get("name", tag)
+            html_url = data.get("html_url", "")
+            current = "v1.0.0"
+            if tag and tag != current:
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(0, lambda: self._show_update_toast(name, html_url))
+        except Exception as exc:
+            _logger.debug("Güncelleme kontrolü başarısız: %s", exc)
+
+    def _show_update_toast(self, release_name: str, url: str) -> None:
+        import webbrowser
+        self._toast.show_message(
+            f"Yeni sürüm mevcut: {release_name}  — İndirmek için tıklayın.",
+            icon="info",
+            action_label="GitHub'a Git",
+            action_callback=lambda: webbrowser.open(url),
+            duration_ms=15000,
+        )
+
