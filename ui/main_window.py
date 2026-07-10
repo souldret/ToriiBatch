@@ -1386,8 +1386,9 @@ class MainWindow(QMainWindow):
         if _ICON_PATH.exists():
             self._tray.setIcon(QIcon(str(_ICON_PATH)))
         else:
+            from PyQt6.QtWidgets import QStyle
             self._tray.setIcon(self.style().standardIcon(
-                __import__("PyQt6.QtWidgets", fromlist=["QStyle"]).QStyle.StandardPixmap.SP_ComputerIcon
+                QStyle.StandardPixmap.SP_ComputerIcon
             ))
         self._tray.setToolTip("ToriiBatch")
 
@@ -1449,7 +1450,6 @@ class MainWindow(QMainWindow):
         if tray_available and not force_quit:
             event.ignore()
             self.hide()
-            from PyQt6.QtWidgets import QSystemTrayIcon
             self._tray.showMessage(
                 "ToriiBatch",
                 "Uygulama arka planda çalışmaya devam ediyor.",
