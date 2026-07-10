@@ -870,15 +870,15 @@ class SettingsDialog(QDialog):
                 finally:
                     await client.close()
 
-            loop = asyncio.new_event_loop()  
+            loop = asyncio.new_event_loop()
             credits = None
             try:
                 credits = loop.run_until_complete(_run())
-                loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception as exc:
                 import logging
                 logging.getLogger(__name__).warning("Kredi kontrol hatası: %s", exc)
             finally:
+                loop.run_until_complete(loop.shutdown_asyncgens())
                 loop.close()
 
             # UI güncellemesini ana thread'de yap

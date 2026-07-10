@@ -11,6 +11,7 @@ import time
 from datetime import datetime
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -31,12 +32,12 @@ from ui.theme import Colors, Metrics
 def _fmt_duration(sec: float) -> str:
     sec = int(sec)
     if sec < 60:
-        return f"{sec}s"
+        return f"{sec} sn"
     m, s = divmod(sec, 60)
     if m < 60:
-        return f"{m}d {s}s"
+        return f"{m} dk {s} sn"
     h, m = divmod(m, 60)
-    return f"{h}s {m}d"
+    return f"{h} sa {m} dk"
 
 
 def _fmt_ts(ts: float) -> str:
@@ -224,7 +225,7 @@ class HistoryDialog(QDialog):
                 # Hatalı satırları kırmızımsı yap
                 if s.failed_pages > 0 and col == 5:
                     item.setForeground(
-                        __import__("PyQt6.QtGui", fromlist=["QColor"]).QColor(Colors.ERROR)
+                        QColor(Colors.ERROR)
                     )
                 self._table.setItem(row, col, item)
 

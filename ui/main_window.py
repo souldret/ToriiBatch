@@ -1083,14 +1083,14 @@ class MainWindow(QMainWindow):
         )
 
         # --- Sistem tepsisi bildirimi ---
-        if hasattr(self, "_tray") and self._tray is not None and not self.isVisible():
+        if hasattr(self, "_tray") and self._tray is not None and self.isMinimized() or not self.isVisible():
             msg = f"Çeviri tamamlandı! {max(0, self._done_pages - self._failed_pages)} başarılı"
             if self._failed_pages > 0:
                 msg += f", {self._failed_pages} hatalı"
             self._tray.showMessage(
                 "ToriiBatch",
                 msg,
-                __import__("PyQt6.QtWidgets", fromlist=["QSystemTrayIcon"]).QSystemTrayIcon.MessageIcon.Information,
+                QSystemTrayIcon.MessageIcon.Information,
                 5000,
             )
 
@@ -1372,30 +1372,6 @@ class MainWindow(QMainWindow):
             "Uygulama çalışmaya devam eder ancak ayarlar kalıcı olmayabilir.",
         )
 
-    def closeEvent(self, event: QCloseEvent) -> None:
-        if self._engine.is_running():
-            reply = QMessageBox.question(
-                self,
-                "Çıkış",
-                "Çeviri devam ediyor. Yine de çıkmak istiyor musunuz?\n"
-                "(İptal işlemi mevcut sayfa bitince durur.)",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            )
-            if reply == QMessageBox.StandardButton.No:
-                event.ignore()
-                return
-            self._engine.cancel()
-            # Thread'in bitmesini bekle — mevcut HTTP isteği bitene kadar
-            # maksimum 8 saniye bekle; süre dolarsa force-quit
-            thread = self._engine._thread  # type: ignore[attr-defined]
-            if thread is not None and thread.isRunning():
-                if not thread.wait(8000):
-                    logger.warning("Engine thread 8 sn içinde bitmedi, zorla sonlandırılıyor.")
-                    thread.terminate()
-                    thread.wait(2000)
-
-        self._sm.save()
-        event.accept()
 
     # ------------------------------------------------------------------
     # Sistem Tepsisi
@@ -1446,7 +1422,7 @@ class MainWindow(QMainWindow):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._tray_show()
 
-    def closeEvent(self, event: "QCloseEvent") -> None:
+    def closeEvent(self, event: QCloseEvent) -> None:
         """Motor çalışırken onay iste; tray varsa minimize et, yoksa kapat."""
         force_quit = getattr(self, "_tray_force_quit", False)
         tray_available = hasattr(self, "_tray") and self._tray is not None
@@ -1455,7 +1431,8 @@ class MainWindow(QMainWindow):
         if self._engine.is_running() and not force_quit:
             reply = QMessageBox.question(
                 self, "Çıkış",
-                "Çeviri devam ediyor. Çıkmak istiyor musunuz?",
+                "Çeviri devam ediyor. Çıkmak istiyor musunuz?\n"
+                "(İptal işlemi mevcut sayfa bitince durur.)",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
@@ -1463,18 +1440,29 @@ class MainWindow(QMainWindow):
                 event.ignore()
                 return
             self._engine.cancel()
+            # Thread'in bitmesini bekle — max 8 sn
+            thread = self._engine._thread  # type: ignore[attr-defined]
+            if thread is not None and thread.isRunning():
+                if not thread.wait(8000):
+                    logger.warning("Engine thread 8 sn içinde bitmedi, zorla sonlandırılıyor.")
+                    thread.terminate()
+                    thread.wait(2000)
 
         # Tray varsa minimize et (force_quit değilse)
         if tray_available and not force_quit:
             event.ignore()
             self.hide()
+            from PyQt6.QtWidgets import QSystemTrayIcon
             self._tray.showMessage(
                 "ToriiBatch",
                 "Uygulama arka planda çalışmaya devam ediyor.",
-                __import__("PyQt6.QtWidgets", fromlist=["QSystemTrayIcon"]).QSystemTrayIcon.MessageIcon.Information,
+                QSystemTrayIcon.MessageIcon.Information,
                 3000,
             )
             return
+
+        # Ayarları kaydet
+        self._sm.save()
 
         # Geçmiş DB'yi kapat
         if hasattr(self, "_history"):

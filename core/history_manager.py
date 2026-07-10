@@ -118,26 +118,27 @@ class HistoryManager:
         if self._conn is None:
             return
         duration = ended_at - started_at
-        try:
-            self._conn.execute(
+        with self._lock:
+            try:
+                self._conn.execute(
                 """
                 INSERT INTO sessions
                     (started_at, ended_at, duration_sec, source_folder, output_folder,
                      total_pages, successful_pages, failed_pages, total_chapters,
                      credits_spent, translator)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    started_at, ended_at, duration,
-                    source_folder, output_folder,
-                    total_pages, successful_pages, failed_pages, total_chapters,
-                    credits_spent, translator,
-                ),
-            )
-            self._conn.commit()
-            logger.debug("HistoryManager: Oturum kaydedildi.")
-        except Exception as exc:
-            logger.error("HistoryManager: Kayıt hatası: %s", exc)
+                    """,
+                    (
+                        started_at, ended_at, duration,
+                        source_folder, output_folder,
+                        total_pages, successful_pages, failed_pages, total_chapters,
+                        credits_spent, translator,
+                    ),
+                )
+                self._conn.commit()
+                logger.debug("HistoryManager: Oturum kaydedildi.")
+            except Exception as exc:
+                logger.error("HistoryManager: Kayıt hatası: %s", exc)
 
     # ------------------------------------------------------------------
     # Okuma
@@ -146,38 +147,40 @@ class HistoryManager:
     def get_sessions(self, limit: int = 100) -> list[SessionRecord]:
         if self._conn is None:
             return []
-        try:
-            cur = self._conn.execute(
-                "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?", (limit,)
-            )
-            rows = cur.fetchall()
-            return [
-                SessionRecord(
-                    id=r["id"],
-                    started_at=r["started_at"],
-                    ended_at=r["ended_at"],
-                    duration_sec=r["duration_sec"],
-                    source_folder=r["source_folder"],
-                    output_folder=r["output_folder"],
-                    total_pages=r["total_pages"],
-                    successful_pages=r["successful_pages"],
-                    failed_pages=r["failed_pages"],
-                    total_chapters=r["total_chapters"],
-                    credits_spent=r["credits_spent"],
-                    translator=r["translator"],
+        with self._lock:
+            try:
+                cur = self._conn.execute(
+                    "SELECT * FROM sessions ORDER BY started_at DESC LIMIT ?", (limit,)
                 )
-                for r in rows
-            ]
-        except Exception as exc:
-            logger.error("HistoryManager: Okuma hatası: %s", exc)
-            return []
+                rows = cur.fetchall()
+                return [
+                    SessionRecord(
+                        id=r["id"],
+                        started_at=r["started_at"],
+                        ended_at=r["ended_at"],
+                        duration_sec=r["duration_sec"],
+                        source_folder=r["source_folder"],
+                        output_folder=r["output_folder"],
+                        total_pages=r["total_pages"],
+                        successful_pages=r["successful_pages"],
+                        failed_pages=r["failed_pages"],
+                        total_chapters=r["total_chapters"],
+                        credits_spent=r["credits_spent"],
+                        translator=r["translator"],
+                    )
+                    for r in rows
+                ]
+            except Exception as exc:
+                logger.error("HistoryManager: Okuma hatası: %s", exc)
+                return []
 
     def get_totals(self) -> dict[str, Any]:
         """Toplam istatistikleri döndürür."""
         if self._conn is None:
             return {}
-        try:
-            cur = self._conn.execute(
+        with self._lock:
+            try:
+                cur = self._conn.execute(
                 """
                 SELECT
                     COUNT(*)          AS session_count,
@@ -188,18 +191,19 @@ class HistoryManager:
                     SUM(duration_sec)  AS total_duration_sec
                 FROM sessions
                 """
-            )
-            row = cur.fetchone()
-            return dict(row) if row else {}
-        except Exception as exc:
-            logger.error("HistoryManager: Toplam hatası: %s", exc)
-            return {}
+                )
+                row = cur.fetchone()
+                return dict(row) if row else {}
+            except Exception as exc:
+                logger.error("HistoryManager: Toplam hatası: %s", exc)
+                return {}
 
     def clear(self) -> None:
         if self._conn is None:
             return
-        try:
-            self._conn.execute("DELETE FROM sessions")
-            self._conn.commit()
-        except Exception as exc:
-            logger.error("HistoryManager: Temizleme hatası: %s", exc)
+        with self._lock:
+            try:
+                self._conn.execute("DELETE FROM sessions")
+                self._conn.commit()
+            except Exception as exc:
+                logger.error("HistoryManager: Temizleme hatası: %s", exc)
