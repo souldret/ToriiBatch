@@ -12,6 +12,7 @@ import asyncio
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 import aiohttp
@@ -214,6 +215,7 @@ class MainWindow(QMainWindow):
         # Oturum izleme
         self._session_started_at: float = 0.0
         self._session_start_credits: float | None = None
+        self._tray_force_quit: bool = False
 
         self._setup_window()
         self._build_ui()
@@ -905,8 +907,7 @@ class MainWindow(QMainWindow):
         settings = dict(self._sm.all()) if hasattr(self._sm, "all") else {}
         settings["source_folder"] = source_root
         # Oturum başlangıcını kaydet
-        import time as _time
-        self._session_started_at = _time.time()
+        self._session_started_at = time.time()
         self._session_start_credits = self._credits_badge.credits
         self._engine.start_batch(selected, settings, output)
 
@@ -1061,8 +1062,7 @@ class MainWindow(QMainWindow):
 
 
         # --- Oturumu geçmişe kaydet ---
-        import time as _time_import
-        ended_at = _time_import.time()
+        ended_at = time.time()
         started_at = getattr(self, "_session_started_at", ended_at)
         start_credits = getattr(self, "_session_start_credits", None)
         current_credits = self._credits_badge.credits
@@ -1379,8 +1379,6 @@ class MainWindow(QMainWindow):
 
     def _setup_tray(self) -> None:
         """Sistem tepsisi ikonunu ve menüsünü oluşturur."""
-        from PyQt6.QtWidgets import QSystemTrayIcon, QMenu
-        from PyQt6.QtGui import QIcon
         if not QSystemTrayIcon.isSystemTrayAvailable():
             self._tray = None
             return
@@ -1418,7 +1416,6 @@ class MainWindow(QMainWindow):
         self.close()
 
     def _on_tray_activated(self, reason) -> None:
-        from PyQt6.QtWidgets import QSystemTrayIcon
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self._tray_show()
 
@@ -1502,7 +1499,6 @@ class MainWindow(QMainWindow):
             html_url = data.get("html_url", "")
             current = "v1.0.0"
             if tag and tag != current:
-                from PyQt6.QtCore import QTimer
                 QTimer.singleShot(0, lambda: self._show_update_toast(name, html_url))
         except Exception as exc:
             _logger.debug("Güncelleme kontrolü başarısız: %s", exc)

@@ -7,7 +7,6 @@ Sorumluluğu:
 - Geçmişi temizleme butonu sunmak.
 """
 
-import time
 from datetime import datetime
 
 from PyQt6.QtCore import Qt

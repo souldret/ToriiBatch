@@ -9,6 +9,7 @@ Sorumluluğu:
 
 import logging
 import sqlite3
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -55,6 +56,7 @@ class HistoryManager:
     def __init__(self) -> None:
         self._db_path = _get_db_path()
         self._conn: sqlite3.Connection | None = None
+        self._lock = threading.Lock()
         self._open()
 
     # ------------------------------------------------------------------
