@@ -549,37 +549,112 @@ class MainWindow(QMainWindow):
             Metrics.SPACING_LG, Metrics.SPACING_SM,
             Metrics.SPACING_LG, Metrics.SPACING_SM,
         )
-        layout.setSpacing(Metrics.SPACING_SM)
+        layout.setSpacing(Metrics.SPACING_MD)
 
-        self._start_btn = QPushButton("Çeviriyi Başlat")
+        font_btn = self.font()
+        font_btn.setPointSize(Metrics.FONT_SIZE_MD)
+        font_btn.setBold(True)
+
+        # ---- Çeviriyi Başlat ----
+        self._start_btn = QPushButton("  Çeviriyi Başlat")
         self._start_btn.setIcon(make_icon("fa5s.play", Colors.TEXT_ON_ACCENT))
-        self._start_btn.setFixedHeight(44)
-        self._start_btn.setIconSize(QSize(18, 18))
+        self._start_btn.setFixedHeight(46)
+        self._start_btn.setIconSize(QSize(16, 16))
         self._start_btn.setMinimumWidth(200)
-        font = self._start_btn.font()
-        font.setPointSize(Metrics.FONT_SIZE_MD)
-        self._start_btn.setFont(font)
+        self._start_btn.setFont(font_btn)
+        self._start_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {Colors.ACCENT};"
+            f"  color: {Colors.TEXT_ON_ACCENT};"
+            f"  border: none;"
+            f"  border-radius: {Metrics.RADIUS_MD}px;"
+            f"  padding: 0px 24px;"
+            f"  font-weight: 700;"
+            f"  font-size: {Metrics.FONT_SIZE_MD}pt;"
+            f"  text-align: left;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: {Colors.ACCENT_HOVER};"
+            f"}}"
+            f"QPushButton:pressed {{"
+            f"  background-color: {Colors.ACCENT_PRESSED};"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  background-color: {Colors.BG_ELEVATED};"
+            f"  color: {Colors.TEXT_DISABLED};"
+            f"}}"
+        )
         self._start_btn.clicked.connect(self._on_start)
 
-        self._pause_btn = QPushButton("Duraklat")
-        self._pause_btn.setIcon(make_icon("fa5s.pause"))
-        self._pause_btn.setProperty("class", "secondary")
-        self._pause_btn.setFixedHeight(44)
-        self._pause_btn.setIconSize(QSize(18, 18))
+        # ---- Duraklat ----
+        self._pause_btn = QPushButton("  Duraklat")
+        self._pause_btn.setIcon(make_icon("fa5s.pause", Colors.TEXT_PRIMARY))
+        self._pause_btn.setFixedHeight(46)
+        self._pause_btn.setIconSize(QSize(15, 15))
         self._pause_btn.setMinimumWidth(140)
-        self._pause_btn.setFont(font)
+        self._pause_btn.setFont(font_btn)
         self._pause_btn.setEnabled(False)
+        self._pause_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {Colors.BG_ELEVATED};"
+            f"  color: {Colors.TEXT_PRIMARY};"
+            f"  border: 1px solid {Colors.BORDER};"
+            f"  border-radius: {Metrics.RADIUS_MD}px;"
+            f"  padding: 0px 20px;"
+            f"  font-weight: 600;"
+            f"  font-size: {Metrics.FONT_SIZE_MD}pt;"
+            f"  text-align: left;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: {Colors.BG_INPUT};"
+            f"  border-color: {Colors.ACCENT_HOVER};"
+            f"  color: {Colors.ACCENT_HOVER};"
+            f"}}"
+            f"QPushButton:pressed {{"
+            f"  background-color: {Colors.BG_BASE};"
+            f"  border-color: {Colors.ACCENT};"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  background-color: {Colors.BG_ELEVATED};"
+            f"  color: {Colors.TEXT_DISABLED};"
+            f"  border-color: {Colors.BORDER};"
+            f"}}"
+        )
         self._pause_btn.clicked.connect(self._on_pause_resume)
         self._paused = False
 
-        self._cancel_btn = QPushButton("İptal Et")
+        # ---- İptal Et ----
+        self._cancel_btn = QPushButton("  İptal Et")
         self._cancel_btn.setIcon(make_icon("fa5s.stop", Colors.ERROR))
-        self._cancel_btn.setProperty("class", "danger")
-        self._cancel_btn.setFixedHeight(44)
-        self._cancel_btn.setIconSize(QSize(18, 18))
+        self._cancel_btn.setFixedHeight(46)
+        self._cancel_btn.setIconSize(QSize(15, 15))
         self._cancel_btn.setMinimumWidth(140)
-        self._cancel_btn.setFont(font)
+        self._cancel_btn.setFont(font_btn)
         self._cancel_btn.setEnabled(False)
+        self._cancel_btn.setStyleSheet(
+            f"QPushButton {{"
+            f"  background-color: {Colors.BG_ELEVATED};"
+            f"  color: {Colors.ERROR};"
+            f"  border: 1px solid {Colors.BORDER};"
+            f"  border-radius: {Metrics.RADIUS_MD}px;"
+            f"  padding: 0px 20px;"
+            f"  font-weight: 600;"
+            f"  font-size: {Metrics.FONT_SIZE_MD}pt;"
+            f"  text-align: left;"
+            f"}}"
+            f"QPushButton:hover {{"
+            f"  background-color: rgba(239, 68, 68, 0.12);"
+            f"  border-color: {Colors.ERROR};"
+            f"}}"
+            f"QPushButton:pressed {{"
+            f"  background-color: rgba(239, 68, 68, 0.22);"
+            f"}}"
+            f"QPushButton:disabled {{"
+            f"  background-color: {Colors.BG_ELEVATED};"
+            f"  color: {Colors.TEXT_DISABLED};"
+            f"  border-color: {Colors.BORDER};"
+            f"}}"
+        )
         self._cancel_btn.clicked.connect(self._on_cancel)
 
         layout.addStretch()
@@ -1160,13 +1235,8 @@ class MainWindow(QMainWindow):
                 url = "https://api.toriitranslate.com/api/credits"
                 headers = {"Authorization": f"Bearer {api_key}"}
                 timeout = aiohttp.ClientTimeout(total=15, connect=8)
-                connector = aiohttp.TCPConnector()
                 try:
-                    async with aiohttp.ClientSession(
-                        connector=connector,
-                        connector_owner=False,  # connector'ı kendimiz kapatacağız
-                        timeout=timeout,
-                    ) as session:
+                    async with aiohttp.ClientSession(timeout=timeout) as session:
                         async with session.get(url, headers=headers) as resp:
                             if resp.status == 200:
                                 body = await resp.json(content_type=None)
@@ -1176,16 +1246,12 @@ class MainWindow(QMainWindow):
                 except Exception as exc:
                     logger.warning("Kredi yenileme hatası: %s", exc)
                     return None
-                finally:
-                    # connector'ı garantili kapat, loop kapanmadan önce
-                    await connector.close()
 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             credits = None
             try:
                 credits = loop.run_until_complete(_run())
-                # Bekleyen async generator'ları temizle
                 loop.run_until_complete(loop.shutdown_asyncgens())
             except Exception as exc:
                 logger.warning("Kredi yenileme loop hatası: %s", exc)
