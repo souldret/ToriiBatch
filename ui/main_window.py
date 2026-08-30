@@ -15,13 +15,12 @@ import threading
 import time
 from pathlib import Path
 
-import aiohttp
-
 from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSlot
 from PyQt6.QtGui import QAction, QCloseEvent, QFont, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
+    QLineEdit,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -119,10 +118,7 @@ class _ToastBar(QWidget):
         layout.addWidget(self._action_btn)
         layout.addWidget(close_btn)
 
-        self.setStyleSheet(
-            f"background-color: {Colors.BG_ELEVATED}; "
-            f"border-top: 1px solid {Colors.ACCENT};"
-        )
+        self.setObjectName("ToastBar")
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.timeout.connect(self.hide)
@@ -142,6 +138,15 @@ class _ToastBar(QWidget):
         """Toast mesajını gösterir."""
         self._set_icon(icon)
         self._msg_lbl.setText(message)
+        accent = {
+            "success": Colors.SUCCESS,
+            "warning": Colors.WARNING,
+            "error": Colors.ERROR,
+        }.get(icon, Colors.ACCENT)
+        self.setStyleSheet(
+            f"QWidget#ToastBar {{ background-color: {Colors.BG_ELEVATED}; "
+            f"border-top: 2px solid {accent}; }}"
+        )
 
         if action_label and action_callback:
             self._action_btn.setText(action_label)
@@ -207,6 +212,8 @@ class MainWindow(QMainWindow):
 
         # Hatalı sayfaları yeniden denemek için: chapter_name → [source_path, ...]
         self._failed_page_paths: dict[str, list[str]] = {}
+        self._job_queue: list[tuple[str, str]] = []
+        self._eta_text: str = ""
 
 
         # Geçmiş yöneticisi
@@ -216,6 +223,8 @@ class MainWindow(QMainWindow):
         self._session_started_at: float = 0.0
         self._session_start_credits: float | None = None
         self._tray_force_quit: bool = False
+        # Kullanıcı iptal ettiyse all_finished "tamamlandı" toast'ı göstermesin
+        self._finish_ignored: bool = False
 
         self._setup_window()
         self._build_ui()
@@ -271,40 +280,56 @@ class MainWindow(QMainWindow):
 
     def _build_header(self) -> QWidget:
         header = QWidget()
-        header.setFixedHeight(70)
-        header.setStyleSheet(
-            f"background-color: {Colors.BG_SURFACE}; "
-            f"border-bottom: 1px solid {Colors.BORDER};"
-        )
+        header.setObjectName("AppHeader")
+        header.setFixedHeight(64)
 
         layout = QHBoxLayout(header)
         layout.setContentsMargins(Metrics.SPACING_LG, 0, Metrics.SPACING_LG, 0)
         layout.setSpacing(Metrics.SPACING_MD)
 
         brand_icon = QLabel()
-        brand_icon.setPixmap(make_icon("fa5s.language", Colors.ACCENT).pixmap(24, 24))
+        brand_icon.setPixmap(make_icon("fa5s.language", Colors.ACCENT).pixmap(22, 22))
         brand_icon.setFixedSize(28, 28)
+
+        brand = QWidget()
+        brand.setStyleSheet("background: transparent;")
+        brand_l = QVBoxLayout(brand)
+        brand_l.setContentsMargins(0, 8, 0, 8)
+        brand_l.setSpacing(0)
 
         logo = QLabel("ToriiBatch")
         f = QFont()
-        f.setPointSize(Metrics.FONT_SIZE_TITLE + 3)
+        f.setPointSize(Metrics.FONT_SIZE_TITLE)
         f.setBold(True)
         logo.setFont(f)
         logo.setStyleSheet(f"color: {Colors.TEXT_PRIMARY}; background: transparent;")
 
+        tag = QLabel("Toplu manga çevirisi")
+        tag.setStyleSheet(
+            f"color: {Colors.TEXT_DISABLED}; font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+        )
+        brand_l.addWidget(logo)
+        brand_l.addWidget(tag)
+
         layout.addWidget(brand_icon)
-        layout.addWidget(logo)
+        layout.addWidget(brand)
         layout.addStretch()
 
-        # CreditsBadge
         self._credits_badge = CreditsBadge()
         layout.addWidget(self._credits_badge)
 
-        # Ayarlar butonu
+        history_btn = QPushButton("Geçmiş")
+        history_btn.setIcon(make_icon("fa5s.history"))
+        history_btn.setProperty("class", "secondary")
+        history_btn.setFixedHeight(36)
+        history_btn.setIconSize(QSize(14, 14))
+        history_btn.clicked.connect(self._open_history)
+        layout.addWidget(history_btn)
+
         self._settings_btn = QPushButton("Ayarlar")
         self._settings_btn.setIcon(make_icon("fa5s.cog"))
         self._settings_btn.setProperty("class", "secondary")
-        self._settings_btn.setFixedHeight(38)
+        self._settings_btn.setFixedHeight(36)
         self._settings_btn.setIconSize(QSize(16, 16))
         self._settings_btn.clicked.connect(self._open_settings)
         layout.addWidget(self._settings_btn)
@@ -335,13 +360,13 @@ class MainWindow(QMainWindow):
 
     def _build_left_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setStyleSheet(f"background-color: {Colors.BG_BASE};")
+        panel.setObjectName("LeftPanel")
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(
             Metrics.SPACING_LG, Metrics.SPACING_MD,
             Metrics.SPACING_MD, Metrics.SPACING_MD,
         )
-        layout.setSpacing(Metrics.SPACING_SM)
+        layout.setSpacing(Metrics.SPACING_MD)
 
         # ── Kaynak klasör ──
         layout.addWidget(self._section_label("Kaynak Klasör"))
@@ -351,8 +376,12 @@ class MainWindow(QMainWindow):
         self._source_drop.folder_selected.connect(self._on_source_selected)
         layout.addWidget(self._source_drop)
 
-        # ── Çıktı klasörü ──
-        layout.addWidget(self._section_label("Çıktı Klasörü"))
+        out_card = QWidget()
+        out_card.setObjectName("PanelCard")
+        out_l = QVBoxLayout(out_card)
+        out_l.setContentsMargins(Metrics.SPACING_MD, Metrics.SPACING_SM, Metrics.SPACING_MD, Metrics.SPACING_SM)
+        out_l.setSpacing(Metrics.SPACING_XS)
+        out_l.addWidget(self._section_label("Çıktı Klasörü"))
         out_row = QHBoxLayout()
         out_row.setSpacing(Metrics.SPACING_SM)
 
@@ -365,26 +394,19 @@ class MainWindow(QMainWindow):
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
         self._output_path_lbl.setWordWrap(False)
+        self._output_path_lbl.setTextFormat(Qt.TextFormat.PlainText)
 
         change_out_btn = QPushButton("Değiştir")
+        change_out_btn.setIcon(make_icon("fa5s.folder"))
         change_out_btn.setProperty("class", "secondary")
-        change_out_btn.setFixedHeight(30)
-        change_out_btn.setFixedWidth(96)
-        change_out_btn.setIconSize(QSize(14, 14))
-        change_out_btn.setStyleSheet(
-            f"font-size: {Metrics.FONT_SIZE_SM}pt; padding: 2px 8px;"
-        )
+        change_out_btn.setFixedHeight(32)
+        change_out_btn.setIconSize(QSize(13, 13))
         change_out_btn.clicked.connect(self._browse_output)
 
         out_row.addWidget(self._output_path_lbl, stretch=1)
         out_row.addWidget(change_out_btn)
-        layout.addLayout(out_row)
-
-        # ── Bölüm listesi başlığı ──
-        sep = QFrame()
-        sep.setFrameShape(QFrame.Shape.HLine)
-        sep.setStyleSheet(f"color: {Colors.BORDER};")
-        layout.addWidget(sep)
+        out_l.addLayout(out_row)
+        layout.addWidget(out_card)
 
         ch_header = QHBoxLayout()
         ch_header.setSpacing(Metrics.SPACING_SM)
@@ -399,7 +421,7 @@ class MainWindow(QMainWindow):
         select_all_btn = QPushButton("Tümünü Seç")
         select_all_btn.setProperty("class", "secondary")
         select_all_btn.setIcon(make_icon("fa5s.check-square"))
-        select_all_btn.setFixedHeight(28)
+        select_all_btn.setFixedHeight(30)
         select_all_btn.setMinimumWidth(96)
         select_all_btn.setIconSize(QSize(13, 13))
         select_all_btn.setStyleSheet(
@@ -410,7 +432,7 @@ class MainWindow(QMainWindow):
         deselect_all_btn = QPushButton("Tümünü Kaldır")
         deselect_all_btn.setProperty("class", "secondary")
         deselect_all_btn.setIcon(make_icon("fa5s.square"))
-        deselect_all_btn.setFixedHeight(28)
+        deselect_all_btn.setFixedHeight(30)
         deselect_all_btn.setMinimumWidth(112)
         deselect_all_btn.setIconSize(QSize(13, 13))
         deselect_all_btn.setStyleSheet(select_all_btn.styleSheet())
@@ -422,21 +444,30 @@ class MainWindow(QMainWindow):
         ch_header.addWidget(deselect_all_btn)
         layout.addLayout(ch_header)
 
+        self._chapter_filter = QLineEdit()
+        self._chapter_filter.setPlaceholderText("Bölüm ara…")
+        self._chapter_filter.textChanged.connect(self._filter_chapters)
+        layout.addWidget(self._chapter_filter)
+
         # ── Bölüm listesi (kaydırılabilir) ──
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet(
-            f"QScrollArea {{ background-color: {Colors.BG_BASE}; border: none; }}"
+            f"QScrollArea {{ background-color: transparent; border: 1px solid {Colors.BORDER}; "
+            f"border-radius: {Metrics.RADIUS_MD}px; }}"
         )
 
         self._chapter_list_widget = QWidget()
-        self._chapter_list_widget.setStyleSheet(
-            f"background-color: {Colors.BG_BASE};"
-        )
+        self._chapter_list_widget.setStyleSheet("background: transparent;")
         self._chapter_list_layout = QVBoxLayout(self._chapter_list_widget)
-        self._chapter_list_layout.setContentsMargins(0, 0, Metrics.SPACING_XS, 0)
-        self._chapter_list_layout.setSpacing(Metrics.SPACING_XS)
+        self._chapter_list_layout.setContentsMargins(
+            Metrics.SPACING_SM, Metrics.SPACING_SM, Metrics.SPACING_SM, Metrics.SPACING_SM
+        )
+        self._chapter_list_layout.setSpacing(Metrics.SPACING_SM)
+
+        self._chapter_empty_state = self._build_chapter_empty_state()
+        self._chapter_list_layout.addWidget(self._chapter_empty_state)
         self._chapter_list_layout.addStretch()
         scroll.setWidget(self._chapter_list_widget)
 
@@ -453,13 +484,49 @@ class MainWindow(QMainWindow):
 
         return panel
 
+    def _build_chapter_empty_state(self) -> QWidget:
+        """Henüz taranmış bölüm yokken listede gösterilen boş durum mesajı."""
+        w = QWidget()
+        w.setStyleSheet("background: transparent;")
+        vl = QVBoxLayout(w)
+        vl.setContentsMargins(
+            Metrics.SPACING_MD, Metrics.SPACING_LG * 2,
+            Metrics.SPACING_MD, Metrics.SPACING_LG,
+        )
+        vl.setSpacing(Metrics.SPACING_SM)
+        vl.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+
+        icon_lbl = QLabel()
+        icon_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        icon_lbl.setStyleSheet("background: transparent;")
+        icon_lbl.setPixmap(make_icon("fa5s.book-open", Colors.TEXT_DISABLED).pixmap(32, 32))
+
+        text_lbl = QLabel("Henüz bölüm bulunamadı")
+        text_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        text_lbl.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY}; "
+            f"font-size: {Metrics.FONT_SIZE_BASE}pt; "
+            "font-weight: 600; background: transparent;"
+        )
+
+        hint_lbl = QLabel("Yukarıdan bir kaynak klasör seçin veya sürükleyip bırakın")
+        hint_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint_lbl.setWordWrap(True)
+        hint_lbl.setStyleSheet(
+            f"color: {Colors.TEXT_DISABLED}; "
+            f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+        )
+
+        vl.addWidget(icon_lbl)
+        vl.addWidget(text_lbl)
+        vl.addWidget(hint_lbl)
+        return w
+
     # ── Sağ panel ─────────────────────────────────────────────────────
 
     def _build_right_panel(self) -> QWidget:
         panel = QWidget()
-        panel.setStyleSheet(
-            f"background-color: {Colors.BG_SURFACE};"
-        )
+        panel.setObjectName("RightPanel")
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(
             Metrics.SPACING_LG, Metrics.SPACING_LG,
@@ -486,7 +553,7 @@ class MainWindow(QMainWindow):
         self._main_progress = QProgressBar()
         self._main_progress.setRange(0, 1)
         self._main_progress.setValue(0)
-        self._main_progress.setFixedHeight(12)
+        self._main_progress.setFixedHeight(10)
         self._main_progress.setTextVisible(False)
 
         layout.addWidget(self._progress_lbl)
@@ -506,7 +573,7 @@ class MainWindow(QMainWindow):
         """Alt kısımda mevcut ayarları özetleyen, tıklanınca ayarları açan şerit."""
         bar = QWidget()
         bar.setObjectName("SettingsSummaryBar")
-        bar.setFixedHeight(40)
+        bar.setFixedHeight(44)
         bar.setStyleSheet(
             f"QWidget#SettingsSummaryBar {{ "
             f"background-color: {Colors.BG_ELEVATED}; "
@@ -554,11 +621,8 @@ class MainWindow(QMainWindow):
 
     def _build_footer(self) -> QWidget:
         footer = QWidget()
-        footer.setFixedHeight(74)
-        footer.setStyleSheet(
-            f"background-color: {Colors.BG_SURFACE}; "
-            f"border-top: 1px solid {Colors.BORDER};"
-        )
+        footer.setObjectName("AppFooter")
+        footer.setFixedHeight(72)
 
         layout = QHBoxLayout(footer)
         layout.setContentsMargins(
@@ -572,107 +636,56 @@ class MainWindow(QMainWindow):
         font_btn.setBold(True)
 
         # ---- Çeviriyi Başlat ----
-        self._start_btn = QPushButton("  Çeviriyi Başlat")
+        self._start_btn = QPushButton("Çeviriyi Başlat")
         self._start_btn.setIcon(make_icon("fa5s.play", Colors.TEXT_ON_ACCENT))
-        self._start_btn.setFixedHeight(46)
-        self._start_btn.setIconSize(QSize(16, 16))
+        self._start_btn.setProperty("class", "cta")
+        self._start_btn.setIconSize(QSize(14, 14))
         self._start_btn.setMinimumWidth(200)
         self._start_btn.setFont(font_btn)
-        self._start_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {Colors.ACCENT};"
-            f"  color: {Colors.TEXT_ON_ACCENT};"
-            f"  border: none;"
-            f"  border-radius: {Metrics.RADIUS_MD}px;"
-            f"  padding: 0px 24px;"
-            f"  font-weight: 700;"
-            f"  font-size: {Metrics.FONT_SIZE_MD}pt;"
-            f"  text-align: left;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background-color: {Colors.ACCENT_HOVER};"
-            f"}}"
-            f"QPushButton:pressed {{"
-            f"  background-color: {Colors.ACCENT_PRESSED};"
-            f"}}"
-            f"QPushButton:disabled {{"
-            f"  background-color: {Colors.BG_ELEVATED};"
-            f"  color: {Colors.TEXT_DISABLED};"
-            f"}}"
-        )
         self._start_btn.clicked.connect(self._on_start)
 
         # ---- Duraklat ----
-        self._pause_btn = QPushButton("  Duraklat")
+        self._pause_btn = QPushButton("Duraklat")
         self._pause_btn.setIcon(make_icon("fa5s.pause", Colors.TEXT_PRIMARY))
-        self._pause_btn.setFixedHeight(46)
-        self._pause_btn.setIconSize(QSize(15, 15))
+        self._pause_btn.setProperty("class", "ctaSecondary")
+        self._pause_btn.setIconSize(QSize(13, 13))
         self._pause_btn.setMinimumWidth(140)
         self._pause_btn.setFont(font_btn)
         self._pause_btn.setEnabled(False)
-        self._pause_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {Colors.BG_ELEVATED};"
-            f"  color: {Colors.TEXT_PRIMARY};"
-            f"  border: 1px solid {Colors.BORDER};"
-            f"  border-radius: {Metrics.RADIUS_MD}px;"
-            f"  padding: 0px 20px;"
-            f"  font-weight: 600;"
-            f"  font-size: {Metrics.FONT_SIZE_MD}pt;"
-            f"  text-align: left;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background-color: {Colors.BG_INPUT};"
-            f"  border-color: {Colors.ACCENT_HOVER};"
-            f"  color: {Colors.ACCENT_HOVER};"
-            f"}}"
-            f"QPushButton:pressed {{"
-            f"  background-color: {Colors.BG_BASE};"
-            f"  border-color: {Colors.ACCENT};"
-            f"}}"
-            f"QPushButton:disabled {{"
-            f"  background-color: {Colors.BG_ELEVATED};"
-            f"  color: {Colors.TEXT_DISABLED};"
-            f"  border-color: {Colors.BORDER};"
-            f"}}"
-        )
         self._pause_btn.clicked.connect(self._on_pause_resume)
         self._paused = False
 
         # ---- İptal Et ----
-        self._cancel_btn = QPushButton("  İptal Et")
+        self._cancel_btn = QPushButton("İptal Et")
         self._cancel_btn.setIcon(make_icon("fa5s.stop", Colors.ERROR))
-        self._cancel_btn.setFixedHeight(46)
-        self._cancel_btn.setIconSize(QSize(15, 15))
+        self._cancel_btn.setProperty("class", "ctaDanger")
+        self._cancel_btn.setIconSize(QSize(13, 13))
         self._cancel_btn.setMinimumWidth(140)
         self._cancel_btn.setFont(font_btn)
         self._cancel_btn.setEnabled(False)
-        self._cancel_btn.setStyleSheet(
-            f"QPushButton {{"
-            f"  background-color: {Colors.BG_ELEVATED};"
-            f"  color: {Colors.ERROR};"
-            f"  border: 1px solid {Colors.BORDER};"
-            f"  border-radius: {Metrics.RADIUS_MD}px;"
-            f"  padding: 0px 20px;"
-            f"  font-weight: 600;"
-            f"  font-size: {Metrics.FONT_SIZE_MD}pt;"
-            f"  text-align: left;"
-            f"}}"
-            f"QPushButton:hover {{"
-            f"  background-color: rgba(239, 68, 68, 0.12);"
-            f"  border-color: {Colors.ERROR};"
-            f"}}"
-            f"QPushButton:pressed {{"
-            f"  background-color: rgba(239, 68, 68, 0.22);"
-            f"}}"
-            f"QPushButton:disabled {{"
-            f"  background-color: {Colors.BG_ELEVATED};"
-            f"  color: {Colors.TEXT_DISABLED};"
-            f"  border-color: {Colors.BORDER};"
-            f"}}"
-        )
         self._cancel_btn.clicked.connect(self._on_cancel)
 
+        preview_btn = QPushButton("Önizle")
+        preview_btn.setIcon(make_icon("fa5s.eye"))
+        preview_btn.setProperty("class", "ctaSecondary")
+        preview_btn.setMinimumWidth(110)
+        preview_btn.clicked.connect(self._on_preview_page)
+
+        ocr_btn = QPushButton("OCR")
+        ocr_btn.setIcon(make_icon("fa5s.search"))
+        ocr_btn.setProperty("class", "ctaSecondary")
+        ocr_btn.setMinimumWidth(90)
+        ocr_btn.clicked.connect(self._on_ocr_page)
+
+        queue_btn = QPushButton("Kuyruğa Ekle")
+        queue_btn.setIcon(make_icon("fa5s.plus"))
+        queue_btn.setProperty("class", "ctaSecondary")
+        queue_btn.setMinimumWidth(130)
+        queue_btn.clicked.connect(self._on_queue_add)
+
+        layout.addWidget(preview_btn)
+        layout.addWidget(ocr_btn)
+        layout.addWidget(queue_btn)
         layout.addStretch()
         layout.addWidget(self._start_btn)
         layout.addWidget(self._pause_btn)
@@ -770,6 +783,8 @@ class MainWindow(QMainWindow):
         e.credits_updated.connect(self._on_credits_updated)
         e.error_occurred.connect(self._on_error_occurred)
         e.all_finished.connect(self._on_all_finished)
+        e.eta_updated.connect(self._on_eta_updated)
+        e.fatal_error.connect(self._on_fatal_error)
 
     # ------------------------------------------------------------------
     # Slotlar — UI etkileşimi
@@ -842,7 +857,7 @@ class MainWindow(QMainWindow):
             out_dir.mkdir(parents=True, exist_ok=True)
 
         # "Kaldığı yerden devam" seçeneği aktifse zaten çevrilmiş sayfaları filtrele
-        if self._sm.get("resume_mode", False):
+        if self._sm.get("resume_mode", True):
             filtered: list[ChapterInfo] = []
             for ch in selected:
                 fch = filter_already_translated(ch, output, source_root)
@@ -903,6 +918,7 @@ class MainWindow(QMainWindow):
         for name, (card, _) in self._chapter_rows.items():
             card.reset()
 
+        self._finish_ignored = False
         self._set_running_state(True)
         settings = dict(self._sm.all()) if hasattr(self._sm, "all") else {}
         settings["source_folder"] = source_root
@@ -916,13 +932,13 @@ class MainWindow(QMainWindow):
         if not self._paused:
             self._engine.pause()
             self._paused = True
-            self._pause_btn.setIcon(make_icon("fa5s.play"))
+            self._pause_btn.setIcon(make_icon("fa5s.play", Colors.TEXT_PRIMARY))
             self._pause_btn.setText("Devam Et")
             self._status_lbl.setText("Duraklatıldı")
         else:
             self._engine.resume()
             self._paused = False
-            self._pause_btn.setIcon(make_icon("fa5s.pause"))
+            self._pause_btn.setIcon(make_icon("fa5s.pause", Colors.TEXT_PRIMARY))
             self._pause_btn.setText("Duraklat")
             self._status_lbl.setText("Çevriliyor…")
 
@@ -934,9 +950,11 @@ class MainWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._finish_ignored = True
             self._engine.cancel()
             self._set_running_state(False)
             self._status_lbl.setText("İptal edildi")
+            self._log_view.append_log("warning", "Çeviri kullanıcı tarafından iptal edildi.")
 
     # ------------------------------------------------------------------
     # Slotlar — motor sinyalleri
@@ -964,9 +982,10 @@ class MainWindow(QMainWindow):
         # Başarılı = toplam işlenen - hatalı (negatife düşmemesi için max(0,...))
         successful = max(0, self._done_pages - self._failed_pages)
         self._stat_done.set_value(str(successful))
+        eta = getattr(self, "_eta_text", "")
         self._progress_lbl.setText(
             f"Genel İlerleme: {self._done_pages}/{total_pages} sayfa"
-            f" — Bölüm {self._done_chapters}/{self._total_chapters}"
+            f" — Bölüm {self._done_chapters}/{self._total_chapters}{eta}"
         )
 
     @pyqtSlot(str, bool)
@@ -1021,15 +1040,36 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def _on_all_finished(self) -> None:
+        # Kullanıcı iptali veya yeni iş başlamadan gelen gecikmiş sinyal
+        if self._finish_ignored:
+            self._finish_ignored = False
+            self._set_running_state(False)
+            self._status_lbl.setText("İptal edildi")
+            return
+
         success = max(0, self._done_pages - self._failed_pages)
         self._set_running_state(False)
         self._stat_done.set_value(str(success))
         self._stat_failed.set_value(str(self._failed_pages))
-        self._main_progress.setValue(self._main_progress.maximum())
+        self._main_progress.setValue(min(self._done_pages, self._main_progress.maximum()))
         self._progress_lbl.setText(
             f"Tamamlandı — {success} başarılı, {self._failed_pages} hatalı"
         )
         self._status_lbl.setText("Tamamlandı")
+        from core.notify import show_job_done
+        show_job_done(
+            "ToriiBatch",
+            f"{success} başarılı, {self._failed_pages} hatalı",
+            getattr(self, "_tray", None),
+        )
+        if self._job_queue:
+            src, out = self._job_queue.pop(0)
+            self._sm.set("source_folder", src)
+            self._sm.set("output_folder", out)
+            self._source_drop.set_path(src)
+            self._update_output_label(out)
+            self._scan_chapters(src)
+            QTimer.singleShot(400, self._on_start)
 
         output_folder = self._sm.get("output_folder", "")
 
@@ -1060,30 +1100,36 @@ class MainWindow(QMainWindow):
                 duration_ms=15000,
             )
 
-
         # --- Oturumu geçmişe kaydet ---
         ended_at = time.time()
         started_at = getattr(self, "_session_started_at", ended_at)
-        start_credits = getattr(self, "_session_start_credits", None)
-        current_credits = self._credits_badge.credits
-        credits_spent = 0.0
-        if start_credits is not None and current_credits is not None:
-            credits_spent = max(0.0, start_credits - current_credits)
-        self._history.add_session(
-            started_at=started_at,
-            ended_at=ended_at,
-            source_folder=self._sm.get("source_folder", ""),
-            output_folder=self._sm.get("output_folder", ""),
-            total_pages=self._done_pages,
-            successful_pages=max(0, self._done_pages - self._failed_pages),
-            failed_pages=self._failed_pages,
-            total_chapters=self._total_chapters,
-            credits_spent=credits_spent,
-            translator=self._sm.get("translator", ""),
-        )
+        # Oturum başlangıcı yoksa / sıfırsa geçmişe yazma
+        if started_at > 0:
+            start_credits = getattr(self, "_session_start_credits", None)
+            current_credits = self._credits_badge.credits
+            credits_spent = 0.0
+            if start_credits is not None and current_credits is not None:
+                credits_spent = max(0.0, start_credits - current_credits)
+            self._history.add_session(
+                started_at=started_at,
+                ended_at=ended_at,
+                source_folder=self._sm.get("source_folder", ""),
+                output_folder=self._sm.get("output_folder", ""),
+                total_pages=self._done_pages,
+                successful_pages=max(0, self._done_pages - self._failed_pages),
+                failed_pages=self._failed_pages,
+                total_chapters=self._total_chapters,
+                credits_spent=credits_spent,
+                translator=self._sm.get("translator", ""),
+            )
+            self._session_started_at = 0.0
 
         # --- Sistem tepsisi bildirimi ---
-        if hasattr(self, "_tray") and self._tray is not None and self.isMinimized() or not self.isVisible():
+        if (
+            hasattr(self, "_tray")
+            and self._tray is not None
+            and (self.isMinimized() or not self.isVisible())
+        ):
             msg = f"Çeviri tamamlandı! {max(0, self._done_pages - self._failed_pages)} başarılı"
             if self._failed_pages > 0:
                 msg += f", {self._failed_pages} hatalı"
@@ -1163,6 +1209,9 @@ class MainWindow(QMainWindow):
             f"Yeniden deneme başlatılıyor — {total_retry} hatalı sayfa.",
         )
 
+        self._finish_ignored = False
+        self._session_started_at = time.time()
+        self._session_start_credits = self._credits_badge.credits
         self._set_running_state(True)
         settings = dict(self._sm.all()) if hasattr(self._sm, "all") else {}
         settings["source_folder"] = source_root
@@ -1199,16 +1248,18 @@ class MainWindow(QMainWindow):
 
     def _rebuild_chapter_list(self) -> None:
         """Bölüm listesindeki widget satırlarını yeniden oluşturur."""
-        # Eski satırları temizle
-        while self._chapter_list_layout.count() > 1:
-            item = self._chapter_list_layout.takeAt(0)
+        # Eski satırları temizle (boş durum widget'ı index 0'da, stretch en sonda kalır)
+        while self._chapter_list_layout.count() > 2:
+            item = self._chapter_list_layout.takeAt(1)
             if item.widget():
                 item.widget().deleteLater()
         self._chapter_rows.clear()
 
+        self._chapter_empty_state.setVisible(not self._chapters)
+
         for chapter in self._chapters:
             row_widget = QWidget()
-            row_widget.setStyleSheet(f"background-color: {Colors.BG_BASE};")
+            row_widget.setStyleSheet("background: transparent;")
             row_layout = QHBoxLayout(row_widget)
             row_layout.setContentsMargins(0, 0, 0, 0)
             row_layout.setSpacing(Metrics.SPACING_XS)
@@ -1242,6 +1293,17 @@ class MainWindow(QMainWindow):
         for _, (_, cb) in self._chapter_rows.items():
             cb.setChecked(checked)
 
+    def _filter_chapters(self, text: str) -> None:
+        needle = text.strip().lower()
+        for name, (card, cb) in self._chapter_rows.items():
+            parent = card.parentWidget()
+            visible = needle in name.lower() if needle else True
+            if parent:
+                parent.setVisible(visible)
+            else:
+                card.setVisible(visible)
+                cb.setVisible(visible)
+
     def _set_running_state(self, running: bool) -> None:
         """Çalışma durumuna göre butonları aktif/pasif yapar."""
         self._start_btn.setEnabled(not running)
@@ -1261,12 +1323,8 @@ class MainWindow(QMainWindow):
 
     def _update_output_label(self, path: str) -> None:
         """Çıktı klasörü etiketini günceller (kısaltılmış yol, tam yol tooltip'te)."""
-        display = path
-        max_len = 48
-        if len(path) > max_len:
-            parts = Path(path).parts
-            if len(parts) > 3:
-                display = str(Path(*parts[:2]) / "…" / parts[-1])
+        fm = self._output_path_lbl.fontMetrics()
+        display = fm.elidedText(path, Qt.TextElideMode.ElideMiddle, max(80, self._output_path_lbl.width() or 240))
         self._output_path_lbl.setText(display)
         self._output_path_lbl.setToolTip(path)
         self._output_path_lbl.setStyleSheet(
@@ -1289,21 +1347,14 @@ class MainWindow(QMainWindow):
             return
 
         def _fetch() -> None:
+            from core.api_client import ToriiAPIClient
+
             async def _run() -> float | None:
-                url = "https://api.toriitranslate.com/api/credits"
-                headers = {"Authorization": f"Bearer {api_key}"}
-                timeout = aiohttp.ClientTimeout(total=15, connect=8)
+                client = ToriiAPIClient(api_key)
                 try:
-                    async with aiohttp.ClientSession(timeout=timeout) as session:
-                        async with session.get(url, headers=headers) as resp:
-                            if resp.status == 200:
-                                body = await resp.json(content_type=None)
-                                if isinstance(body, dict):
-                                    return float(body.get("credits", 0))
-                    return None
-                except Exception as exc:
-                    logger.warning("Kredi yenileme hatası: %s", exc)
-                    return None
+                    return await client.get_credits()
+                finally:
+                    await client.close()
 
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
@@ -1316,11 +1367,28 @@ class MainWindow(QMainWindow):
             finally:
                 loop.close()
 
-            # UI güncellemesi ana thread'de yapılmalı
             if credits is not None:
-                QTimer.singleShot(0, lambda: self._credits_badge.update_credits(credits))
+                QTimer.singleShot(
+                    0, lambda c=credits: self._credits_badge.update_credits(c)
+                )
 
         threading.Thread(target=_fetch, daemon=True).start()
+
+    @pyqtSlot(float)
+    def _on_eta_updated(self, seconds: float) -> None:
+        mins, secs = divmod(int(max(0, seconds)), 60)
+        self._eta_text = f" — ETA {mins} dk {secs:02d} sn" if mins or secs else ""
+        total_pages = self._main_progress.maximum()
+        self._progress_lbl.setText(
+            f"Genel İlerleme: {self._done_pages}/{total_pages} sayfa"
+            f" — Bölüm {self._done_chapters}/{self._total_chapters}{self._eta_text}"
+        )
+
+    @pyqtSlot(str)
+    def _on_fatal_error(self, error: str) -> None:
+        self._engine.cancel()
+        self._set_running_state(False)
+        QMessageBox.critical(self, "API Hatası", error)
 
     def _restore_state(self) -> None:
         """
@@ -1394,8 +1462,10 @@ class MainWindow(QMainWindow):
 
         tray_menu = QMenu()
         tray_menu.setStyleSheet(
-            f"QMenu {{ background-color: #1e1e2e; color: #cdd6f4; border: 1px solid #313244; }}"
-            f"QMenu::item:selected {{ background-color: #7c3aed; }}"
+            f"QMenu {{ background-color: {Colors.BG_ELEVATED}; color: {Colors.TEXT_PRIMARY}; "
+            f"border: 1px solid {Colors.BORDER}; border-radius: {Metrics.RADIUS_MD}px; padding: 6px; }}"
+            f"QMenu::item {{ padding: 8px 28px 8px 16px; border-radius: {Metrics.RADIUS_SM}px; }}"
+            f"QMenu::item:selected {{ background-color: {Colors.ACCENT_DIM}; color: {Colors.ACCENT}; }}"
         )
         show_action = tray_menu.addAction("Göster")
         show_action.triggered.connect(self._tray_show)
@@ -1437,16 +1507,12 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+            # Kullanıcı açıkça çıkışı onayladı → tray'e düşme, tam kapan
+            self._finish_ignored = True
             self._engine.cancel()
-            # Thread'in bitmesini bekle — max 8 sn
-            thread = self._engine._thread  # type: ignore[attr-defined]
-            if thread is not None and thread.isRunning():
-                if not thread.wait(8000):
-                    logger.warning("Engine thread 8 sn içinde bitmedi, zorla sonlandırılıyor.")
-                    thread.terminate()
-                    thread.wait(2000)
+            force_quit = True
 
-        # Tray varsa minimize et (force_quit değilse)
+        # Tray varsa minimize et (force_quit değilse).
         if tray_available and not force_quit:
             event.ignore()
             self.hide()
@@ -1459,11 +1525,21 @@ class MainWindow(QMainWindow):
             return
 
         # Ayarları kaydet
-        self._sm.save()
+        try:
+            self._sm.save()
+        except Exception as exc:
+            logger.warning("Kapanışta ayarlar kaydedilemedi: %s", exc)
 
         # Geçmiş DB'yi kapat
         if hasattr(self, "_history"):
-            self._history.close()
+            try:
+                self._history.close()
+            except Exception as exc:
+                logger.warning("History DB kapatılamadı: %s", exc)
+
+        # Tray ikonunu temizle
+        if tray_available:
+            self._tray.hide()
 
         event.accept()
 
@@ -1481,6 +1557,8 @@ class MainWindow(QMainWindow):
 
     def _check_for_updates(self) -> None:
         """Arka planda GitHub releases API'sini kontrol eder."""
+        if not self._sm.get("check_updates", True):
+            return
         import threading
         threading.Thread(target=self._fetch_latest_release, daemon=True).start()
 
@@ -1512,4 +1590,88 @@ class MainWindow(QMainWindow):
             action_callback=lambda: webbrowser.open(url),
             duration_ms=15000,
         )
+
+    def _on_preview_page(self) -> None:
+        selected = self._selected_chapters()
+        if not selected or not selected[0].image_paths:
+            QMessageBox.information(self, "Önizleme", "Önce görsel içeren bir bölüm seçin.")
+            return
+        path = selected[0].image_paths[0]
+        self._run_single_page_job("preview", path)
+
+    def _on_ocr_page(self) -> None:
+        selected = self._selected_chapters()
+        if not selected or not selected[0].image_paths:
+            QMessageBox.information(self, "OCR", "Önce görsel içeren bir bölüm seçin.")
+            return
+        path = selected[0].image_paths[0]
+        self._run_single_page_job("ocr", path)
+
+    def _on_queue_add(self) -> None:
+        src = self._sm.get("source_folder", "")
+        out = self._sm.get("output_folder", "")
+        if not src or not out:
+            QMessageBox.warning(self, "Kuyruk", "Kaynak ve çıktı klasörü gerekli.")
+            return
+        self._job_queue.append((src, out))
+        self._log_view.append_log("info", f"Kuyruğa eklendi: {src} ({len(self._job_queue)} iş)")
+
+    def _run_single_page_job(self, kind: str, image_path: str) -> None:
+        api_key = self._sm.get_api_key()
+        if not api_key:
+            self._open_settings()
+            return
+        settings = dict(self._sm.all())
+
+        def _worker() -> None:
+            from core.api_client import ToriiAPIClient
+            client = ToriiAPIClient(api_key)
+
+            async def _run():
+                try:
+                    if kind == "ocr":
+                        return await client.ocr_image(image_path)
+                    return await client.translate_image(
+                        image_path=image_path,
+                        target_lang=settings.get("target_lang", "tr"),
+                        translator=settings.get("translator") or "gemini-3.1-flash-lite",
+                        font=settings.get("font") or "NotoSans",
+                        text_align=settings.get("text_align") or "auto",
+                        stroke_disabled=bool(settings.get("stroke_disabled", False)),
+                        min_font_size=settings.get("min_font_size") or None,
+                        bubbles_only=bool(settings.get("bubbles_only", False)),
+                        custom_prompt=settings.get("custom_prompt") or "",
+                    )
+                finally:
+                    await client.close()
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                result = loop.run_until_complete(_run())
+            except Exception as exc:
+                result = {"success": False, "error": str(exc)}
+            finally:
+                loop.close()
+            QTimer.singleShot(0, lambda r=result: self._show_single_page_result(kind, image_path, r))
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self._log_view.append_log("info", f"{kind.upper()}: {Path(image_path).name}")
+
+    def _show_single_page_result(self, kind: str, image_path: str, result: dict) -> None:
+        if not result.get("success"):
+            QMessageBox.warning(self, kind.upper(), result.get("error") or "İstek başarısız")
+            return
+        if kind == "ocr":
+            data = result.get("data") or {}
+            QMessageBox.information(self, "OCR", str(data)[:2000])
+            return
+        from core.translator_engine import _write_image
+        out = Path(image_path).with_name(Path(image_path).stem + "_preview.png")
+        if _write_image(result.get("image_b64"), out):
+            self._log_view.append_log("success", f"Önizleme kaydedildi: {out}")
+            try:
+                os.startfile(out)
+            except Exception:
+                pass
 

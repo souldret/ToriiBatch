@@ -16,11 +16,10 @@ from pathlib import Path
 
 from PyQt6.QtCore import (
     Qt,
-    QSize,
     QTimer,
     pyqtSignal,
 )
-from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QMouseEvent
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent, QFont, QMouseEvent, QResizeEvent
 from PyQt6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
@@ -130,6 +129,7 @@ class ChapterListItemWidget(QWidget):
         self._name_label = QLabel(self._chapter_name)
         self._name_label.setMinimumWidth(0)
         self._name_label.setToolTip(self._chapter_name)
+        self._name_label.setTextFormat(Qt.TextFormat.PlainText)
         self._name_label.setSizePolicy(
             QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred
         )
@@ -169,8 +169,16 @@ class ChapterListItemWidget(QWidget):
             f"border-color: {Colors.BORDER_FOCUS}; "
             f"background-color: {Colors.ACCENT_DIM}; }}"
         )
-        self.setMinimumHeight(50)
-        self.setMaximumHeight(58)
+        self.setMinimumHeight(52)
+        self.setMaximumHeight(60)
+
+    def resizeEvent(self, event: QResizeEvent) -> None:
+        super().resizeEvent(event)
+        fm = self._name_label.fontMetrics()
+        elided = fm.elidedText(
+            self._chapter_name, Qt.TextElideMode.ElideRight, max(40, self._name_label.width())
+        )
+        self._name_label.setText(elided)
 
     # ------------------------------------------------------------------
     # Public API
@@ -268,6 +276,7 @@ class LogPanel(QWidget):
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self._lines: list[str] = []
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -281,7 +290,7 @@ class LogPanel(QWidget):
         # Başlık çubuğu
         header = QWidget()
         header.setObjectName("LogPanelHeader")
-        header.setFixedHeight(34)
+        header.setFixedHeight(36)
         header.setStyleSheet(
             f"QWidget#LogPanelHeader {{ background-color: {Colors.BG_ELEVATED}; "
             f"border-bottom: 1px solid {Colors.BORDER}; "
@@ -310,8 +319,18 @@ class LogPanel(QWidget):
         )
         clear_btn.clicked.connect(self.clear)
 
+        export_btn = QPushButton("Dışa Aktar")
+        export_btn.setIcon(icon("fa5s.file-export"))
+        export_btn.setProperty("class", "secondary")
+        export_btn.setFixedHeight(24)
+        export_btn.setStyleSheet(
+            f"font-size: {Metrics.FONT_SIZE_SM}pt; padding: 2px 8px;"
+        )
+        export_btn.clicked.connect(self.export_log)
+
         header_layout.addWidget(title_lbl)
         header_layout.addStretch()
+        header_layout.addWidget(export_btn)
         header_layout.addWidget(clear_btn)
 
         # Kaydırılabilir log alanı
@@ -364,6 +383,8 @@ class LogPanel(QWidget):
         """
         color = self._LEVEL_COLORS.get(level.lower(), Colors.TEXT_SECONDARY)
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
+        self._lines.append(f"{timestamp} [{level.upper()}] {message}")
+        self._lines = self._lines[-self._MAX_ROWS :]
 
         row = QWidget()
         row.setStyleSheet("background: transparent;")
@@ -425,10 +446,20 @@ class LogPanel(QWidget):
 
     def clear(self) -> None:
         """Tüm log satırlarını siler."""
+        self._lines.clear()
         while self._log_layout.count() > 1:
             item = self._log_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+
+    def export_log(self) -> None:
+        path, _ = QFileDialog.getSaveFileName(self, "Logu Kaydet", "toriibatch.log", "Metin (*.log *.txt)")
+        if not path:
+            return
+        try:
+            Path(path).write_text("\n".join(self._lines), encoding="utf-8")
+        except OSError as exc:
+            logger.error("Log yazılamadı: %s", exc)
 
 
 # ---------------------------------------------------------------------------
@@ -478,7 +509,7 @@ class CreditsBadge(QWidget):
             f"border: 1px solid {Colors.BORDER}; "
             f"border-radius: {Metrics.RADIUS_SM}px; }}"
         )
-        self.setFixedHeight(26)
+        self.setFixedHeight(28)
 
     def _set_badge_icon(self, state: str) -> None:
         if state == "warning":
@@ -637,8 +668,8 @@ class DropZoneFrame(QWidget):
         layout.addWidget(self._main_lbl)
         layout.addWidget(self._path_lbl)
 
-        self.setMinimumHeight(112)
-        self.setMaximumHeight(148)
+        self.setMinimumHeight(108)
+        self.setMaximumHeight(140)
 
     # ------------------------------------------------------------------
     # İkon yardımcısı
@@ -840,8 +871,8 @@ class StatCard(QWidget):
         layout.addWidget(self._value_lbl)
         layout.addWidget(self._label_lbl)
 
-        self.setMinimumWidth(90)
-        self.setMinimumHeight(80)
+        self.setMinimumWidth(100)
+        self.setMinimumHeight(88)
 
     def set_value(self, value: str) -> None:
         """

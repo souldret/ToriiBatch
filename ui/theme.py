@@ -7,8 +7,12 @@ Sorumluluğu:
 - apply_theme(app) fonksiyonu ile QApplication'a tema uygulamak.
 """
 
+from pathlib import Path
+
 from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtWidgets import QApplication
+
+_CHECK_SVG = (Path(__file__).resolve().parent.parent / "assets" / "check.svg").as_posix()
 
 
 # ---------------------------------------------------------------------------
@@ -51,6 +55,37 @@ class Colors:
     SCROLL_HOVER  = "#4a5866"
 
 
+_DARK = {k: v for k, v in Colors.__dict__.items() if k.isupper()}
+_LIGHT = {
+    "BG_BASE": "#f4f6f8",
+    "BG_SURFACE": "#ffffff",
+    "BG_ELEVATED": "#eef1f4",
+    "BG_INPUT": "#ffffff",
+    "ACCENT": "#0d9488",
+    "ACCENT_HOVER": "#14b8a6",
+    "ACCENT_PRESSED": "#0f766e",
+    "ACCENT_DIM": "#ccfbf1",
+    "TEXT_PRIMARY": "#111827",
+    "TEXT_SECONDARY": "#4b5563",
+    "TEXT_DISABLED": "#9ca3af",
+    "TEXT_ON_ACCENT": "#ffffff",
+    "BORDER": "#d1d5db",
+    "BORDER_FOCUS": "#0d9488",
+    "SUCCESS": "#059669",
+    "WARNING": "#d97706",
+    "ERROR": "#dc2626",
+    "INFO": "#2563eb",
+    "SCROLL_HANDLE": "#cbd5e1",
+    "SCROLL_HOVER": "#94a3b8",
+}
+
+
+def set_theme_name(name: str) -> None:
+    palette = _LIGHT if name == "light" else _DARK
+    for key, value in palette.items():
+        setattr(Colors, key, value)
+
+
 # ---------------------------------------------------------------------------
 # Boyut / mesafe sabitleri
 # ---------------------------------------------------------------------------
@@ -63,9 +98,9 @@ class Metrics:
     SPACING_MD  = 16
     SPACING_LG  = 24
 
-    RADIUS_SM   = 6
-    RADIUS_MD   = 8
-    RADIUS_LG   = 12
+    RADIUS_SM   = 8
+    RADIUS_MD   = 10
+    RADIUS_LG   = 14
 
     FONT_SIZE_SM    = 9
     FONT_SIZE_BASE  = 10
@@ -93,7 +128,7 @@ def get_stylesheet() -> str:
 /* ===== GENEL ===== */
 
 QWidget {{
-    background-color: {c.BG_BASE};
+    background-color: transparent;
     color: {c.TEXT_PRIMARY};
     font-family: "Inter", "Segoe UI", "SF Pro Text", "Helvetica Neue", sans-serif;
     font-size: {m.FONT_SIZE_BASE}pt;
@@ -103,6 +138,36 @@ QWidget {{
 
 QMainWindow {{
     background-color: {c.BG_BASE};
+}}
+
+QWidget#AppHeader {{
+    background-color: {c.BG_SURFACE};
+    border-bottom: 1px solid {c.BORDER};
+}}
+
+QWidget#AppFooter {{
+    background-color: {c.BG_SURFACE};
+    border-top: 1px solid {c.BORDER};
+}}
+
+QWidget#LeftPanel {{
+    background-color: {c.BG_BASE};
+}}
+
+QWidget#RightPanel {{
+    background-color: {c.BG_SURFACE};
+    border-left: 1px solid {c.BORDER};
+}}
+
+QWidget#PanelCard {{
+    background-color: {c.BG_SURFACE};
+    border: 1px solid {c.BORDER};
+    border-radius: {m.RADIUS_LG}px;
+}}
+
+QWidget#ToastBar {{
+    background-color: {c.BG_ELEVATED};
+    border-top: 1px solid {c.ACCENT};
 }}
 
 QDialog {{
@@ -229,10 +294,9 @@ QPushButton {{
     font-size: {m.FONT_SIZE_BASE}pt;
     border: none;
     border-radius: {m.RADIUS_MD}px;
-    padding: 8px 20px;
+    padding: 8px 16px;
     min-height: 34px;
     icon-size: 16px;
-    text-align: center;
 }}
 
 QPushButton:hover {{
@@ -296,6 +360,86 @@ QPushButton[class="danger"]:disabled {{
     border-color: {c.BORDER};
 }}
 
+/* ===== BÜYÜK EYLEM BUTONLARI (footer: Başlat / Duraklat / İptal) ===== */
+
+QPushButton[class="cta"] {{
+    background-color: {c.ACCENT};
+    color: {c.TEXT_ON_ACCENT};
+    border: none;
+    border-radius: {m.RADIUS_MD}px;
+    padding: 0px 24px;
+    font-weight: 700;
+    font-size: {m.FONT_SIZE_MD}pt;
+    min-height: 46px;
+}}
+
+QPushButton[class="cta"]:hover {{
+    background-color: {c.ACCENT_HOVER};
+}}
+
+QPushButton[class="cta"]:pressed {{
+    background-color: {c.ACCENT_PRESSED};
+}}
+
+QPushButton[class="cta"]:disabled {{
+    background-color: {c.BG_ELEVATED};
+    color: {c.TEXT_DISABLED};
+}}
+
+QPushButton[class="ctaSecondary"] {{
+    background-color: {c.BG_ELEVATED};
+    color: {c.TEXT_PRIMARY};
+    border: 1px solid {c.BORDER};
+    border-radius: {m.RADIUS_MD}px;
+    padding: 0px 20px;
+    font-weight: 600;
+    font-size: {m.FONT_SIZE_MD}pt;
+    min-height: 46px;
+}}
+
+QPushButton[class="ctaSecondary"]:hover {{
+    background-color: {c.BG_INPUT};
+    border-color: {c.ACCENT_HOVER};
+    color: {c.ACCENT_HOVER};
+}}
+
+QPushButton[class="ctaSecondary"]:pressed {{
+    background-color: {c.BG_BASE};
+    border-color: {c.ACCENT};
+}}
+
+QPushButton[class="ctaSecondary"]:disabled {{
+    background-color: {c.BG_ELEVATED};
+    color: {c.TEXT_DISABLED};
+    border-color: {c.BORDER};
+}}
+
+QPushButton[class="ctaDanger"] {{
+    background-color: {c.BG_ELEVATED};
+    color: {c.ERROR};
+    border: 1px solid {c.BORDER};
+    border-radius: {m.RADIUS_MD}px;
+    padding: 0px 20px;
+    font-weight: 600;
+    font-size: {m.FONT_SIZE_MD}pt;
+    min-height: 46px;
+}}
+
+QPushButton[class="ctaDanger"]:hover {{
+    background-color: rgba(239, 68, 68, 0.12);
+    border-color: {c.ERROR};
+}}
+
+QPushButton[class="ctaDanger"]:pressed {{
+    background-color: rgba(239, 68, 68, 0.22);
+}}
+
+QPushButton[class="ctaDanger"]:disabled {{
+    background-color: {c.BG_ELEVATED};
+    color: {c.TEXT_DISABLED};
+    border-color: {c.BORDER};
+}}
+
 /* ===== INPUT ALANLARI ===== */
 
 QLineEdit, QTextEdit, QPlainTextEdit {{
@@ -338,6 +482,21 @@ QComboBox:hover {{
 
 QComboBox:focus {{
     border-color: {c.BORDER_FOCUS};
+}}
+
+QComboBox::drop-down {{
+    border: none;
+    width: 28px;
+    background: transparent;
+}}
+
+QComboBox::down-arrow {{
+    width: 10px;
+    height: 10px;
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 5px solid {c.TEXT_SECONDARY};
+    margin-right: 8px;
 }}
 
 QComboBox QAbstractItemView {{
@@ -400,7 +559,7 @@ QCheckBox::indicator:hover {{
 QCheckBox::indicator:checked {{
     background-color: {c.ACCENT};
     border-color: {c.ACCENT};
-    image: none;
+    image: url("{_CHECK_SVG}");
 }}
 
 QCheckBox:disabled {{
@@ -458,6 +617,11 @@ QScrollBar::sub-line:vertical {{
     height: 0;
 }}
 
+QScrollBar::add-page:vertical,
+QScrollBar::sub-page:vertical {{
+    background: transparent;
+}}
+
 QScrollBar:horizontal {{
     background-color: {c.BG_BASE};
     height: 10px;
@@ -478,6 +642,11 @@ QScrollBar::handle:horizontal:hover {{
 QScrollBar::add-line:horizontal,
 QScrollBar::sub-line:horizontal {{
     width: 0;
+}}
+
+QScrollBar::add-page:horizontal,
+QScrollBar::sub-page:horizontal {{
+    background: transparent;
 }}
 
 /* ===== SCROLL AREA ===== */
@@ -564,9 +733,9 @@ QListWidget::item:selected {{
 
 QSplitter::handle {{
     background-color: {c.BORDER};
-    width: 2px;
-    height: 2px;
-    margin: 4px;
+    width: 1px;
+    height: 1px;
+    margin: 0;
 }}
 
 QSplitter::handle:hover {{
@@ -651,6 +820,34 @@ QGroupBox::title {{
     color: {c.ACCENT};
     font-weight: bold;
 }}
+
+QTableWidget {{
+    background-color: {c.BG_SURFACE};
+    alternate-background-color: {c.BG_ELEVATED};
+    color: {c.TEXT_PRIMARY};
+    border: 1px solid {c.BORDER};
+    border-radius: {m.RADIUS_MD}px;
+    gridline-color: {c.BORDER};
+    outline: none;
+}}
+
+QTableWidget::item {{
+    padding: 6px;
+}}
+
+QTableWidget::item:selected {{
+    background-color: {c.ACCENT_DIM};
+    color: {c.ACCENT};
+}}
+
+QHeaderView::section {{
+    background-color: {c.BG_ELEVATED};
+    color: {c.TEXT_SECONDARY};
+    padding: 8px;
+    border: none;
+    border-bottom: 1px solid {c.BORDER};
+    font-weight: 600;
+}}
 """
 
 
@@ -658,7 +855,7 @@ QGroupBox::title {{
 # Tema uygulama
 # ---------------------------------------------------------------------------
 
-def apply_theme(app: QApplication) -> None:
+def apply_theme(app: QApplication, theme: str = "dark") -> None:
     """
     Verilen QApplication örneğine koyu temayı uygular.
 
@@ -672,7 +869,7 @@ def apply_theme(app: QApplication) -> None:
     """
     from PyQt6.QtWidgets import QStyleFactory
 
-    # Fusion style — tüm platformlarda tutarlı görünüm sağlar
+    set_theme_name(theme)
     app.setStyle(QStyleFactory.create("Fusion"))
 
     palette = QPalette()

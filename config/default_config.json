@@ -15,10 +15,12 @@
   "output_folder": "",
   "keep_original_backup": true,
   "keep_inpainted_copy": false,
+  "resume_mode": true,
   "output_image_format": "png",
   "max_concurrent_requests": 1,
   "theme": "dark",
+  "check_updates": true,
   "language_options": ["tr","en","ja","ko","zh-cn","zh-tw","de","fr","es","ru","ar","pt","id","vi","it","pl","nl","th","hi","fil"],
-  "translator_options": ["gemini-3.1-flash-lite","deepseek-v4-flash","grok-4.20","kimi-k2.5","gpt-5.4","gemini-3-flash","claude-sonnet-4.6","gemini-3.5-flash"],
+  "translator_options": ["gemini-3.1-flash-lite","deepseek","gpt-5.6-luna","grok-4.20","kimi-k2.5","gpt-5.4","gemini-3-flash","claude-sonnet-4.6","gemini-3.6-flash"],
   "font_options": ["NotoSans","WildWords","BadComic","MaShanZheng","KomikaJam","Bangers","Edo","RIDIBatang","Bushidoo","Hayah","Itim","MogulIrina","Heroika","Shonen"]
 }

@@ -31,6 +31,37 @@ _JITTER_MAX = 0.5          # Rastgele ek bekleme üst sınırı (saniye)
 # Rate limit: saniyede 1 istek
 _MIN_REQUEST_INTERVAL = 1.0  # saniye
 
+# UI'da gösterilen font adlarını API'nin beklediği kısa koda çevirir.
+# (toriitranslate.com/api referans alınmıştır; API "NotoSans" gibi görünen
+# adları değil "noto" gibi kısa kodları kabul eder.)
+_FONT_NAME_TO_CODE: dict[str, str] = {
+    "notosans": "noto",
+    "wildwords": "wildwords",
+    "badcomic": "badcomic",
+    "mashanzheng": "mashanzheng",
+    "komikajam": "komika",
+    "bangers": "bangers",
+    "edo": "edo",
+    "ridibatang": "ridi",
+    "bushidoo": "bushidoo",
+    "hayah": "hayah",
+    "itim": "itim",
+    "mogulirina": "mogul",
+    "heroika": "heroika",
+    "shonen": "shonen",
+}
+
+
+def _resolve_font_code(font: str) -> str:
+    """
+    UI'daki görünen font adını API'nin beklediği koda çevirir.
+
+    Eşleşme bulunamazsa (örn. kullanıcı zaten kodu girmişse) değeri
+    olduğu gibi (küçük harfe çevrilerek) döndürür.
+    """
+    key = font.strip().lower().replace(" ", "").replace("_", "").replace("-", "")
+    return _FONT_NAME_TO_CODE.get(key, font)
+
 
 class ToriiAPIClient:
     """
@@ -185,10 +216,15 @@ class ToriiAPIClient:
         *,
         headers: dict,
         data=None,
+        data_factory=None,
         is_rate_sensitive: bool = True,
     ) -> tuple[int, dict | None, dict]:
         """
         HTTP isteğini retry mantığıyla gerçekleştirir.
+
+        ``data_factory`` verilirse her denemede yeniden çağrılır. Bu, aiohttp
+        ``FormData`` gibi yalnızca bir kez tüketilebilen gövdelerin 429/network
+        retry sırasında boş gitmesini engeller.
 
         Dönüş: (status_code, response_json_or_none, response_headers)
         Kurtarılamaz hatada (200 dışı ve retry bitmişse) status_code < 0 döner.
@@ -203,8 +239,10 @@ class ToriiAPIClient:
             await self._throttle()
             try:
                 session = await self._get_session()
+                # FormData tek kullanımlıktır; retry'da yeniden üret
+                request_data = data_factory() if data_factory is not None else data
                 async with session.request(
-                    method, url, headers=headers, data=data
+                    method, url, headers=headers, data=request_data
                 ) as resp:
                     status = resp.status
                     resp_headers = dict(resp.headers)
@@ -265,10 +303,15 @@ class ToriiAPIClient:
                 aiohttp.ServerDisconnectedError,
                 aiohttp.ClientPayloadError,
                 asyncio.TimeoutError,
+                aiohttp.ClientOSError,
+                aiohttp.ClientResponseError,
             ) as exc:
                 net_attempt += 1
                 # Bağlantı hatasında session bozulmuş olabilir — sıfırla
-                await self.close()
+                try:
+                    await self.close()
+                except Exception:
+                    pass
                 if net_attempt >= max_retries_net:
                     logger.error(
                         "Network hatası, max deneme aşıldı: %s", exc
@@ -357,31 +400,32 @@ class ToriiAPIClient:
         except OSError as exc:
             return self._error_result(f"Dosya okunamadı: {exc}")
 
-        data = aiohttp.FormData()
-        data.add_field(
-            "file",
-            image_bytes,
-            filename=path.name,
-            content_type="application/octet-stream",
-        )
-        data.add_field("target_lang", target_lang)
-        data.add_field("translator", translator)
-        data.add_field("font", font)
-        data.add_field("text_align", text_align)
-        data.add_field("stroke_disabled", "true" if stroke_disabled else "false")
-        data.add_field("context", context)
-
-        if min_font_size is not None:
-            data.add_field("min_font_size", str(min_font_size))
-        if bubbles_only:
-            data.add_field("bubbles_only", "true")
-        if custom_prompt:
-            data.add_field("custom_prompt", custom_prompt[:1000])
+        def _make_form() -> aiohttp.FormData:
+            form = aiohttp.FormData()
+            form.add_field(
+                "file",
+                image_bytes,
+                filename=path.name,
+                content_type="application/octet-stream",
+            )
+            form.add_field("target_lang", target_lang)
+            form.add_field("translator", translator)
+            form.add_field("font", _resolve_font_code(font))
+            form.add_field("text_align", text_align)
+            form.add_field("stroke_disabled", "true" if stroke_disabled else "false")
+            form.add_field("context", context)
+            if min_font_size is not None:
+                form.add_field("min_font_size", str(min_font_size))
+            if bubbles_only:
+                form.add_field("bubbles_only", "true")
+            if custom_prompt:
+                form.add_field("custom_prompt", custom_prompt[:1000])
+            return form
 
         logger.debug("translate_image: %s → %s (%s)", path.name, target_lang, translator)
 
         status, body, resp_headers = await self._request_with_retry(
-            "POST", url, headers=headers, data=data, is_rate_sensitive=True
+            "POST", url, headers=headers, data_factory=_make_form, is_rate_sensitive=True
         )
 
         credits_remaining: float | None = None
@@ -481,17 +525,19 @@ class ToriiAPIClient:
         headers = self._build_headers()
         url = f"{BASE_URL}/api/v2/ocr"
 
-        data = aiohttp.FormData()
-        data.add_field(
-            "file",
-            image_bytes,
-            filename=path.name,
-            content_type="application/octet-stream",
-        )
+        def _make_form() -> aiohttp.FormData:
+            form = aiohttp.FormData()
+            form.add_field(
+                "file",
+                image_bytes,
+                filename=path.name,
+                content_type="application/octet-stream",
+            )
+            return form
 
         logger.debug("ocr_image: %s", path.name)
         status, body, _ = await self._request_with_retry(
-            "POST", url, headers=headers, data=data, is_rate_sensitive=True
+            "POST", url, headers=headers, data_factory=_make_form, is_rate_sensitive=True
         )
 
         if status == 200 and body is not None:

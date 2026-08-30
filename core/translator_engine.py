@@ -17,7 +17,6 @@ import threading
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
-from typing import Any
 
 from PyQt6.QtCore import (
     QObject,
@@ -111,6 +110,8 @@ class _EngineThread(QThread):
     credits_updated   = pyqtSignal(float)
     all_finished      = pyqtSignal()
     error_occurred    = pyqtSignal(str, str, str)     # (bölüm, hata, kaynak_yol)
+    eta_updated       = pyqtSignal(float)             # kalan saniye
+    fatal_error       = pyqtSignal(str)
 
     def __init__(
         self,
@@ -131,6 +132,9 @@ class _EngineThread(QThread):
         self._cancel_event = threading.Event()
         self._pause_event  = threading.Event()   # set = devam et, clear = durakla
         self._pause_event.set()  # başlangıçta duraklamamış
+        self._page_times: list[float] = []
+        self._pages_left = 0
+        self._auth_failed = False
 
     # ------------------------------------------------------------------
     # Kontrol metodları (GUI thread'inden çağrılır)
@@ -164,12 +168,19 @@ class _EngineThread(QThread):
             self.error_occurred.emit("", str(exc), "")
         finally:
             # Session'ı kapat (TCP bağlantılarını temizle)
-            if not loop.is_closed():
+            try:
+                if not loop.is_closed():
+                    try:
+                        loop.run_until_complete(
+                            asyncio.wait_for(self._client.close(), timeout=5.0)
+                        )
+                    except Exception:
+                        pass
+            finally:
                 try:
-                    loop.run_until_complete(self._client.close())
+                    loop.close()
                 except Exception:
                     pass
-            loop.close()
             self.all_finished.emit()
 
     # ------------------------------------------------------------------
@@ -191,12 +202,27 @@ class _EngineThread(QThread):
             f"Çeviri başlıyor: {len(self._chapters)} bölüm.",
         )
 
-        for chapter in self._chapters:
-            if self._cancel_event.is_set():
-                self.log_message.emit("warning", "İptal edildi, işlem durduruluyor.")
-                break
+        concurrent = max(1, int(settings.get("max_concurrent_requests") or 1))
+        self._page_times: list[float] = []
+        self._pages_left = sum(c.page_count for c in self._chapters)
+        self._auth_failed = False
 
-            await self._process_chapter(chapter, source_root)
+        if concurrent <= 1:
+            for chapter in self._chapters:
+                if self._cancel_event.is_set() or self._auth_failed:
+                    self.log_message.emit("warning", "İptal edildi, işlem durduruluyor.")
+                    break
+                await self._process_chapter(chapter, source_root)
+        else:
+            sem = asyncio.Semaphore(concurrent)
+
+            async def _run_one(ch: ChapterInfo) -> None:
+                async with sem:
+                    if self._cancel_event.is_set() or self._auth_failed:
+                        return
+                    await self._process_chapter(ch, source_root)
+
+            await asyncio.gather(*[_run_one(ch) for ch in self._chapters])
 
     # ------------------------------------------------------------------
     # Bölüm işleme
@@ -221,6 +247,7 @@ class _EngineThread(QThread):
         use_context: bool = bool(settings.get("use_context_chain", True))
         output_format: str = settings.get("output_image_format", "png")
         save_inpainted: bool = bool(settings.get("keep_inpainted_copy", False))
+        keep_backup: bool = bool(settings.get("keep_original_backup", False))
         target_lang: str = settings.get("target_lang", "tr")
 
         # Çıktı klasörü
@@ -231,7 +258,10 @@ class _EngineThread(QThread):
         completed = 0
         failed = 0
         consecutive_errors = 0
+        context_file = output_dir / ".torii_context.json"
         context = "None"
+        if use_context:
+            context = _load_context(context_file)
 
         self.chapter_started.emit(chapter.name)
         self.log_message.emit(
@@ -246,6 +276,11 @@ class _EngineThread(QThread):
                     "warning",
                     f"[{chapter.name}] İptal: kalan sayfalar atlandı.",
                 )
+                for leftover in output_dir.glob("*.tmp"):
+                    try:
+                        leftover.unlink()
+                    except OSError:
+                        pass
                 break
 
             # --- Duraklat kontrolü (asyncio ile thread güvenli bekleme) ---
@@ -268,15 +303,15 @@ class _EngineThread(QThread):
                 context=context if use_context else "None",
                 output_format=output_format,
                 save_inpainted=save_inpainted,
+                keep_backup=keep_backup,
             )
 
             if result.status == PageStatus.DONE:
                 completed += 1
                 consecutive_errors = 0
-                # Sonraki sayfa için context'i güncelle
                 if use_context:
                     context = result.next_context
-                # Sinyal: görsel çevrildi
+                    _save_context(context_file, context)
                 self.image_translated.emit(
                     chapter.name,
                     str(result.source_path),
@@ -284,17 +319,25 @@ class _EngineThread(QThread):
                 )
                 if result.credits_remaining is not None:
                     self.credits_updated.emit(result.credits_remaining)
+                if result.elapsed_seconds > 0:
+                    self._page_times.append(result.elapsed_seconds)
+                    self._pages_left = max(0, self._pages_left - 1)
+                    avg = sum(self._page_times[-20:]) / len(self._page_times[-20:])
+                    self.eta_updated.emit(avg * self._pages_left)
             else:
                 failed += 1
                 consecutive_errors += 1
-                context = "None"  # hata sonrası context sıfırla
-                self.error_occurred.emit(
-                    chapter.name,
-                    result.error or "Bilinmeyen hata",
-                    str(result.source_path),
-                )
+                context = "None"
+                err = result.error or "Bilinmeyen hata"
+                self.error_occurred.emit(chapter.name, err, str(result.source_path))
+                if "401" in err or "yetkisiz" in err.lower():
+                    self._auth_failed = True
+                    self._cancel_event.set()
+                    self.fatal_error.emit(err)
+                    break
+                if "kaydedilemedi" in err.lower() or "diske" in err.lower():
+                    self.log_message.emit("error", f"[{chapter.name}] Disk yazma hatası: {err}")
 
-                # Üst üste 3 hata → bölümü atla
                 if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
                     self.log_message.emit(
                         "error",
@@ -330,6 +373,7 @@ class _EngineThread(QThread):
         context: str,
         output_format: str,
         save_inpainted: bool,
+        keep_backup: bool = False,
     ) -> PageResult:
         """
         Tek bir sayfayı API üzerinden çevirir ve diske kaydeder.
@@ -433,6 +477,14 @@ class _EngineThread(QThread):
             )
             return result
 
+        if keep_backup:
+            backup_path = output_path.with_stem(output_path.stem + "_original")
+            backup_path = backup_path.with_suffix(source_path.suffix)
+            try:
+                await asyncio.to_thread(_copy_file, source_path, backup_path)
+            except Exception as exc:
+                logger.warning("Orijinal yedek kopyalanamadı (%s): %s", source_path, exc)
+
         # İnpainted versiyonu kaydet (isteğe bağlı)
         if save_inpainted:
             inpainted_b64: str | None = response.get("inpainted_b64")
@@ -473,6 +525,33 @@ class _EngineThread(QThread):
 # Dosya yazma yardımcısı (asyncio.to_thread ile çağrılır)
 # ---------------------------------------------------------------------------
 
+def _load_context(path: Path) -> str:
+    import json
+    try:
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            ctx = data.get("context")
+            if isinstance(ctx, str) and ctx:
+                return ctx
+    except Exception:
+        pass
+    return "None"
+
+
+def _save_context(path: Path, context: str) -> None:
+    import json
+    try:
+        path.write_text(json.dumps({"context": context}, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("Context kaydedilemedi: %s", exc)
+
+
+def _copy_file(src: Path, dst: Path) -> None:
+    import shutil
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
 def _write_image(b64_data: str | None, output_path: Path) -> bool:
     """
     Base64 kodlu görsel verisini diske kaydeder.
@@ -498,7 +577,9 @@ def _write_image(b64_data: str | None, output_path: Path) -> bool:
             b64_data = b64_data.split(",", 1)[1]
         image_bytes = base64.b64decode(b64_data)
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(image_bytes)
+        tmp = output_path.with_suffix(output_path.suffix + ".tmp")
+        tmp.write_bytes(image_bytes)
+        tmp.replace(output_path)
         return True
     except Exception as exc:
         logger.error("Görsel kaydedilemedi (%s): %s", output_path, exc)
@@ -539,6 +620,8 @@ class TranslatorEngine(QObject):
     credits_updated  = pyqtSignal(float)
     all_finished     = pyqtSignal()
     error_occurred   = pyqtSignal(str, str, str)     # (bölüm, hata, kaynak_yol)
+    eta_updated      = pyqtSignal(float)
+    fatal_error      = pyqtSignal(str)
 
     # --- Geriye dönük uyumluluk sinyalleri (main_window.py bağlantıları için) ---
     chapter_done     = pyqtSignal(str, bool)         # chapter_finished ile aynı
@@ -561,6 +644,10 @@ class TranslatorEngine(QObject):
         super().__init__(parent)
         self._sm = settings_manager
         self._thread: _EngineThread | None = None
+
+        # Her start_batch çağrısı yeni bir nesil üretir; eski thread sinyalleri yok sayılır
+        self._generation: int = 0
+        self._active_generation: int = 0
 
         # İlerleme sayaçları (geriye dönük uyumluluk için)
         self._total_pages: int = 0
@@ -600,32 +687,41 @@ class TranslatorEngine(QObject):
 
         self.cancel()  # varsa önceki işi temizle
 
+        self._generation += 1
+        generation = self._generation
+        self._active_generation = generation
+
         self._total_pages = sum(c.page_count for c in chapters)
         self._done_pages = 0
         self._failed_pages = 0
 
         client = self._build_client()
 
-        self._thread = _EngineThread(
+        thread = _EngineThread(
             chapters=chapters,
             settings=settings,
             output_root=output_root,
             client=client,
             parent=self,
         )
+        self._thread = thread
 
-        # Sinyal yönlendirme
-        self._thread.chapter_started.connect(self.chapter_started)
-        self._thread.chapter_progress.connect(self._on_chapter_progress)
-        self._thread.chapter_finished.connect(self._on_chapter_finished)
-        self._thread.image_translated.connect(self.image_translated)
-        self._thread.log_message.connect(self.log_message)
-        self._thread.credits_updated.connect(self.credits_updated)
-        self._thread.error_occurred.connect(self.error_occurred)
-        self._thread.all_finished.connect(self._on_all_finished)
-        self._thread.finished.connect(self._thread.deleteLater)
+        # Sinyal yönlendirme — generation kapanışı ile eski thread sızıntısı engellenir
+        thread.chapter_started.connect(self.chapter_started)
+        thread.chapter_progress.connect(self._on_chapter_progress)
+        thread.chapter_finished.connect(self._on_chapter_finished)
+        thread.image_translated.connect(self.image_translated)
+        thread.log_message.connect(self.log_message)
+        thread.credits_updated.connect(self.credits_updated)
+        thread.error_occurred.connect(self._on_error_occurred)
+        thread.eta_updated.connect(self.eta_updated)
+        thread.fatal_error.connect(self.fatal_error)
+        thread.all_finished.connect(
+            lambda g=generation: self._on_all_finished(g)
+        )
+        thread.finished.connect(thread.deleteLater)
 
-        self._thread.start()
+        thread.start()
 
     def start(self, chapters: list[ChapterInfo]) -> None:
         """
@@ -660,11 +756,26 @@ class TranslatorEngine(QObject):
 
     def cancel(self) -> None:
         """
-        İşlemi iptal eder ve thread'in bitmesini bekler (en fazla 5 sn).
+        İşlemi iptal eder, sinyalleri keser ve thread'in bitmesini bekler
+        (en fazla 8 sn).
         """
-        if self._thread and self._thread.isRunning():
-            self._thread.request_cancel()
-            self._thread.wait(5000)
+        thread = self._thread
+        if thread is None:
+            return
+
+        # Bu iptal sonrası eski sinyaller UI'ya sızmasın
+        self._active_generation = -1
+        self._disconnect_thread(thread)
+
+        if thread.isRunning():
+            thread.request_cancel()
+            if not thread.wait(8000):
+                logger.warning(
+                    "Engine thread 8 sn içinde bitmedi; sinyaller kesildi, "
+                    "thread arka planda kapanacak."
+                )
+        if self._thread is thread:
+            self._thread = None
 
     def stop(self) -> None:
         """Geriye dönük uyumluluk: cancel() ile aynı işlevi görür."""
@@ -684,9 +795,38 @@ class TranslatorEngine(QObject):
     # Dahili slotlar
     # ------------------------------------------------------------------
 
+    def _is_active_sender(self) -> bool:
+        """Sinyal aktif thread'den geliyorsa True."""
+        if self._thread is None or self._active_generation < 0:
+            return False
+        sender = self.sender()
+        return sender is None or sender is self._thread
+
+    @staticmethod
+    def _disconnect_thread(thread: _EngineThread) -> None:
+        """Thread sinyallerini güvenli şekilde keser."""
+        for signal in (
+            thread.chapter_started,
+            thread.chapter_progress,
+            thread.chapter_finished,
+            thread.image_translated,
+            thread.log_message,
+            thread.credits_updated,
+            thread.error_occurred,
+            thread.eta_updated,
+            thread.fatal_error,
+            thread.all_finished,
+        ):
+            try:
+                signal.disconnect()
+            except TypeError:
+                pass
+
     @pyqtSlot(str, int, int)
     def _on_chapter_progress(self, chapter_name: str, done: int, total: int) -> None:
         """chapter_progress sinyalini iletir; genel ilerlemeyi de günceller."""
+        if not self._is_active_sender():
+            return
         self.chapter_progress.emit(chapter_name, done, total)
         # Her sinyal 1 sayfa işlendiğini temsil eder (başarılı veya hatalı)
         if self._done_pages < self._total_pages:
@@ -696,15 +836,27 @@ class TranslatorEngine(QObject):
     @pyqtSlot(str, bool)
     def _on_chapter_finished(self, chapter_name: str, success: bool) -> None:
         """chapter_finished ve geriye dönük chapter_done sinyallerini yayınlar."""
+        if not self._is_active_sender():
+            return
         self.chapter_finished.emit(chapter_name, success)
         self.chapter_done.emit(chapter_name, success)
 
-    @pyqtSlot()
-    def _on_all_finished(self) -> None:
+    @pyqtSlot(str, str, str)
+    def _on_error_occurred(self, chapter_name: str, error: str, source_path: str) -> None:
+        """Hata sayacını günceller ve error_occurred sinyalini dışarı iletir."""
+        if not self._is_active_sender():
+            return
+        self._failed_pages += 1
+        self.error_occurred.emit(chapter_name, error, source_path)
+
+    def _on_all_finished(self, generation: int) -> None:
         """all_finished ve geriye dönük all_done sinyallerini yayınlar."""
+        # Eski/iptal edilmiş batch'in gecikmiş bitiş sinyali
+        if generation != self._active_generation:
+            return
+
+        finished_thread = self._thread
         self.all_finished.emit()
-        # _failed_pages UI katmanından error_occurred sinyali üzerinden izlenir;
-        # burada sıfır olabilir — all_done için mevcut sayaçları kullan
         failed = self._failed_pages
         success = max(0, self._done_pages - failed)
         self.all_done.emit(success, failed)
@@ -712,7 +864,8 @@ class TranslatorEngine(QObject):
             "info",
             "Tüm işler tamamlandı.",
         )
-        self._thread = None
+        if self._thread is finished_thread:
+            self._thread = None
 
     # ------------------------------------------------------------------
     # Yardımcılar

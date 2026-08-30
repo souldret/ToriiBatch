@@ -238,8 +238,11 @@ def main() -> None:
 
     # ── Koyu tema ──
     try:
+        from core.settings_manager import SettingsManager
         from ui.theme import apply_theme
-        apply_theme(app)
+        sm = SettingsManager()
+        sm.load()
+        apply_theme(app, sm.get("theme", "dark"))
         logger.debug("Koyu tema uygulandı.")
     except Exception as exc:
         logger.warning("Tema uygulanamadı: %s", exc)

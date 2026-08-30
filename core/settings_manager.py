@@ -21,6 +21,8 @@ from typing import Any
 from cryptography.fernet import Fernet, InvalidToken
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from core.secrets_store import load_secret, store_secret
+
 logger = logging.getLogger(__name__)
 
 # Proje içindeki varsayılan config
@@ -197,10 +199,13 @@ class SettingsManager(QObject):
 
         # 3) Hassas alanları çöz (şifreli değerleri plaintext'e dönüştür)
         for key in _SENSITIVE_KEYS:
+            cred = load_secret(key)
+            if cred:
+                self._config[key] = cred
+                continue
             raw = self._config.get(key, "")
             if raw:
                 decrypted = _decrypt(raw)
-                # Çözme başarısızsa orijinali koru (belki henüz şifrelenmemiş)
                 self._config[key] = decrypted if decrypted else raw
 
         logger.info("Ayarlar yüklendi.")
@@ -376,7 +381,9 @@ class SettingsManager(QObject):
         if encrypt_sensitive:
             for key in _SENSITIVE_KEYS:
                 raw = to_write.get(key, "")
-                if raw:
+                if raw and store_secret(key, raw):
+                    to_write[key] = ""
+                elif raw:
                     to_write[key] = _encrypt(raw)
         try:
             with self._config_path.open("w", encoding="utf-8") as f:

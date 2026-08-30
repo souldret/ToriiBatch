@@ -55,7 +55,7 @@ class HistoryDialog(QDialog):
         self.setWindowTitle("Çeviri Geçmişi")
         self.setMinimumSize(860, 520)
         self.resize(1000, 600)
-        self.setStyleSheet(f"background-color: {Colors.BG_BASE}; color: {Colors.TEXT_PRIMARY};")
+        self.setStyleSheet(f"QDialog {{ background-color: {Colors.BG_BASE}; }}")
         self._build_ui()
         self._load_data()
 
@@ -123,35 +123,12 @@ class HistoryDialog(QDialog):
         btn_row = QHBoxLayout()
         btn_row.addStretch()
         clear_btn = QPushButton("Geçmişi Temizle")
+        clear_btn.setProperty("class", "ctaDanger")
         clear_btn.setFixedHeight(36)
-        clear_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.BG_ELEVATED};
-                color: {Colors.ERROR};
-                border: 1px solid {Colors.BORDER};
-                border-radius: {Metrics.RADIUS_MD}px;
-                padding: 0 16px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(239,68,68,0.12);
-                border-color: {Colors.ERROR};
-            }}
-        """)
         clear_btn.clicked.connect(self._on_clear)
         close_btn = QPushButton("Kapat")
+        close_btn.setProperty("class", "cta")
         close_btn.setFixedHeight(36)
-        close_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {Colors.ACCENT};
-                color: {Colors.TEXT_ON_ACCENT};
-                border: none;
-                border-radius: {Metrics.RADIUS_MD}px;
-                padding: 0 20px;
-                font-weight: 700;
-            }}
-            QPushButton:hover {{ background-color: {Colors.ACCENT_HOVER}; }}
-        """)
         close_btn.clicked.connect(self.accept)
         btn_row.addWidget(clear_btn)
         btn_row.addWidget(close_btn)
@@ -159,13 +136,7 @@ class HistoryDialog(QDialog):
 
     def _make_summary_card(self, title: str, value: str) -> QWidget:
         card = QWidget()
-        card.setStyleSheet(f"""
-            QWidget {{
-                background-color: {Colors.BG_SURFACE};
-                border: 1px solid {Colors.BORDER};
-                border-radius: 8px;
-            }}
-        """)
+        card.setObjectName("PanelCard")
         vl = QVBoxLayout(card)
         vl.setContentsMargins(16, 10, 16, 10)
         vl.setSpacing(2)

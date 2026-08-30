@@ -307,11 +307,18 @@ def filter_already_translated(
         )
 
     # Çıktı klasöründeki mevcut base name'leri (uzantısız) topla
-    existing_bases: set[str] = {
-        p.stem.lower()
-        for p in output_dir.iterdir()
-        if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-    }
+    existing_bases: set[str] = set()
+    try:
+        for p in output_dir.iterdir():
+            if not p.is_file() or p.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                continue
+            stem = p.stem.lower()
+            if stem.endswith("_original") or stem.endswith("_inpainted"):
+                continue
+            existing_bases.add(stem)
+    except OSError as exc:
+        logger.warning("Çıktı klasörü okunamadı (%s): %s", output_dir, exc)
+        existing_bases = set()
 
     remaining: list[str] = [
         img for img in chapter.image_paths

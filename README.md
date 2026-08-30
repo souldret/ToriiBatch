@@ -13,8 +13,9 @@
 - **Çoklu model desteği** — Gemini, GPT, Claude, DeepSeek ve daha fazlası; model listesi ayarlardan düzenlenebilir.
 - **Özelleştirilebilir çıktı** — PNG/JPG/WebP format seçimi, inpainted (temiz) kopya kaydetme, orijinal yedekleme.
 - **Duraklat / Devam Et / İptal** — Çeviri sürecini kesintisiz yönetin.
-- **Koyu tema** — Modern, göz yormayan arayüz.
-- **Tek tık kurulum** — `install.bat` ile her şey otomatik kurulur.
+- **Koyu / açık tema**, bölüm arama, log dışa aktarma, ETA, iş kuyruğu.
+- **Önizleme ve OCR**, Windows Credential Manager, iş bitince bildirim.
+- **Tek tık kurulum** — `install.bat` ile her şey otomatik kurulur. Exe: `pyinstaller pyinstaller.spec`
 
 ---
 
@@ -57,7 +58,7 @@ ToriiBatch, çeviri için toriitranslate.com API'sini kullanır. Çeviri yapabil
 3. **API & Kimlik** sekmesinde API Anahtarı alanına anahtarınızı yapıştırın.
 4. **Kaydet**'e tıklayın.
 
-Anahtarınız yerel olarak Fernet şifrelemesiyle saklanır; hiçbir şekilde dışarıya gönderilmez.
+Anahtarınız Windows'ta Credential Manager, diğer sistemlerde Fernet ile saklanır.
 
 ---
 

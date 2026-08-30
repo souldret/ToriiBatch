@@ -104,7 +104,7 @@ def _scrollable(inner: QWidget) -> QScrollArea:
     scroll.setWidgetResizable(True)
     scroll.setFrameShape(QFrame.Shape.NoFrame)
     scroll.setStyleSheet(
-        f"QScrollArea {{ background: transparent; border: none; }}"
+        "QScrollArea { background: transparent; border: none; }"
     )
     scroll.setWidget(inner)
     return scroll
@@ -194,6 +194,8 @@ class SettingsDialog(QDialog):
     def __init__(self, settings_manager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._sm = settings_manager
+        # İptal edilirse SettingsManager'a yazılmaması için geçici alan
+        self._pending_output_folder: str | None = None
         self.setWindowTitle("Ayarlar — ToriiBatch")
         self.setMinimumSize(780, 640)
         self.resize(900, 720)
@@ -235,7 +237,7 @@ class SettingsDialog(QDialog):
 
         self._settings_nav = QListWidget()
         self._settings_nav.setObjectName("SettingsNav")
-        self._settings_nav.setFixedWidth(196)
+        self._settings_nav.setFixedWidth(208)
         self._settings_nav.setHorizontalScrollBarPolicy(
             Qt.ScrollBarPolicy.ScrollBarAlwaysOff
         )
@@ -341,7 +343,7 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(_note_label(
             "Anahtarı toriitranslate.com adresinden edinin. "
-            "Yerel olarak Fernet şifrelemesiyle saklanır."
+            "Windows'ta Credential Manager, diğer sistemlerde Fernet ile saklanır."
         ))
 
         # Kredi kontrol butonu
@@ -612,8 +614,7 @@ class SettingsDialog(QDialog):
         self._max_concurrent.setFixedWidth(80)
         conc_row.addWidget(self._max_concurrent)
         conc_row.addWidget(_note_label(
-            "API rate limit: saniyede 1 istek (steady-state). "
-            "Birden fazla bölüm paralel işlenmez, bu ayar ileride kullanılacak."
+            "API hâlâ saniyede 1 istek ile sınırlıdır; 1'den büyük değer bölümleri paralel kuyruğa alır."
         ))
         conc_row.addStretch()
         layout.addLayout(conc_row)
@@ -643,11 +644,10 @@ class SettingsDialog(QDialog):
         layout.addWidget(_section_label("Tema"))
         theme_row = QHBoxLayout()
         self._theme_combo = QComboBox()
-        self._theme_combo.addItems(["Koyu"])   # Açık tema ileride eklenecek
+        self._theme_combo.addItems(["Koyu", "Açık"])
         self._theme_combo.setFixedWidth(140)
-        self._theme_combo.setEnabled(False)    # Şimdilik sadece koyu
         theme_row.addWidget(self._theme_combo)
-        theme_row.addWidget(_note_label("Açık tema ileride eklenecek."))
+        theme_row.addWidget(_note_label("Kaydettikten sonra temayı uygulamak için uygulamayı yeniden başlatın."))
         theme_row.addStretch()
         layout.addLayout(theme_row)
 
@@ -656,8 +656,6 @@ class SettingsDialog(QDialog):
         # ── Güncelleme kontrolü ──
         layout.addWidget(_section_label("Güncellemeler"))
         self._check_updates = QCheckBox("Açılışta güncellemeleri kontrol et")
-        self._check_updates.setToolTip("Bu özellik yakında kullanıma sunulacak.")
-        self._check_updates.setEnabled(False)   # Şimdilik işlevsiz
         layout.addWidget(self._check_updates)
 
         layout.addWidget(_separator())
@@ -754,6 +752,9 @@ class SettingsDialog(QDialog):
         # Sekme 4 — Genel / Gelişmiş
         self._translator_list.set_items(sm.get_translator_options())
         self._language_list.set_items(sm.get_language_options())
+        theme = sm.get("theme", "dark")
+        self._theme_combo.setCurrentIndex(1 if theme == "light" else 0)
+        self._check_updates.setChecked(bool(sm.get("check_updates", True)))
 
     # ------------------------------------------------------------------
     # Kaydet / İptal / Sıfırla
@@ -794,6 +795,8 @@ class SettingsDialog(QDialog):
         sm.set("custom_prompt", self._custom_prompt.toPlainText()[:1000])
 
         # Sekme 3 — Çıktı
+        if self._pending_output_folder is not None:
+            sm.set("output_folder", self._pending_output_folder)
         sm.set("output_image_format",     self._output_format.currentText())
         sm.set("max_concurrent_requests", self._max_concurrent.value())
         sm.set("keep_original_backup",    self._keep_backup.isChecked())
@@ -803,6 +806,8 @@ class SettingsDialog(QDialog):
         # Sekme 4 — Gelişmiş listeler
         sm.set_translator_options(self._translator_list.get_items())
         sm.set("language_options", self._language_list.get_items())
+        sm.set("theme", "light" if self._theme_combo.currentText() == "Açık" else "dark")
+        sm.set("check_updates", self._check_updates.isChecked())
 
         sm.save()
         logger.info("Ayarlar kaydedildi.")
@@ -871,18 +876,18 @@ class SettingsDialog(QDialog):
                     await client.close()
 
             loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
             credits = None
             try:
                 credits = loop.run_until_complete(_run())
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("Kredi kontrol hatası: %s", exc)
-            finally:
                 loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception as exc:
+                logger.warning("Kredi kontrol hatası: %s", exc)
+            finally:
                 loop.close()
 
             # UI güncellemesini ana thread'de yap
-            QTimer.singleShot(0, lambda: self._show_credits_result(credits))
+            QTimer.singleShot(0, lambda c=credits: self._show_credits_result(c))
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -925,10 +930,15 @@ class SettingsDialog(QDialog):
 
     @pyqtSlot()
     def _browse_output_folder(self) -> None:
-        start = self._sm.get("output_folder") or str(Path.home())
+        start = (
+            self._pending_output_folder
+            or self._sm.get("output_folder")
+            or str(Path.home())
+        )
         folder = QFileDialog.getExistingDirectory(self, "Çıktı Klasörü Seç", start)
         if folder:
-            self._sm.set("output_folder", folder)
+            # Kaydet'e basılana kadar SettingsManager'a yazma
+            self._pending_output_folder = folder
             self._output_folder_lbl.setText(self._short_path(folder))
             self._output_folder_lbl.setToolTip(folder)
             self._output_folder_lbl.setStyleSheet(
