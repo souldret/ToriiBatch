@@ -307,11 +307,13 @@ class ToriiAPIClient:
                 aiohttp.ClientResponseError,
             ) as exc:
                 net_attempt += 1
-                # Bağlantı hatasında session bozulmuş olabilir — sıfırla
-                try:
-                    await self.close()
-                except Exception:
-                    pass
+                sess = self._session
+                self._session = None
+                if sess is not None and not sess.closed:
+                    try:
+                        await sess.close()
+                    except Exception:
+                        pass
                 if net_attempt >= max_retries_net:
                     logger.error(
                         "Network hatası, max deneme aşıldı: %s", exc
@@ -330,6 +332,7 @@ class ToriiAPIClient:
                     wait,
                 )
                 await asyncio.sleep(wait)
+                continue
 
     # ------------------------------------------------------------------
     # Public metodlar

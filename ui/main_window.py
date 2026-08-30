@@ -1392,7 +1392,8 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_fatal_error(self, error: str) -> None:
-        self._engine.cancel()
+        self._finish_ignored = True
+        self._job_queue.clear()
         self._set_running_state(False)
         QMessageBox.critical(self, "API Hatası", error)
 
@@ -1411,7 +1412,9 @@ class MainWindow(QMainWindow):
         # Önceki kaynak klasörü geri yükle ve tarama yap
         saved_src = sm.get("source_folder", "")
         if saved_src and Path(saved_src).is_dir():
+            self._source_drop.blockSignals(True)
             self._source_drop.set_path(saved_src)
+            self._source_drop.blockSignals(False)
             self._scan_chapters(saved_src)
 
         self._refresh_settings_summary()

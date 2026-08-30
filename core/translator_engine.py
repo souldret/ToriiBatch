@@ -735,7 +735,6 @@ class TranslatorEngine(QObject):
         thread.all_finished.connect(
             lambda g=generation: self._on_all_finished(g)
         )
-        thread.finished.connect(thread.deleteLater)
 
         thread.start()
 
@@ -872,6 +871,11 @@ class TranslatorEngine(QObject):
             return
 
         finished_thread = self._thread
+        if finished_thread is not None:
+            try:
+                finished_thread.deleteLater()
+            except RuntimeError:
+                pass
         self.all_finished.emit()
         failed = self._failed_pages
         success = max(0, self._done_pages - failed)
