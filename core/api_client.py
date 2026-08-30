@@ -407,7 +407,7 @@ class ToriiAPIClient:
             form = aiohttp.FormData()
             form.add_field(
                 "file",
-                image_bytes,
+                bytes(image_bytes),
                 filename=path.name,
                 content_type="application/octet-stream",
             )
@@ -532,7 +532,7 @@ class ToriiAPIClient:
             form = aiohttp.FormData()
             form.add_field(
                 "file",
-                image_bytes,
+                bytes(image_bytes),
                 filename=path.name,
                 content_type="application/octet-stream",
             )

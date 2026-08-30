@@ -14,6 +14,7 @@ import asyncio
 import base64
 import logging
 import threading
+import time
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
@@ -413,8 +414,6 @@ class _EngineThread(QThread):
         -----
         PageResult
         """
-        import time
-
         result = PageResult(
             chapter_name=chapter_name,
             page_index=page_index,
@@ -784,7 +783,14 @@ class TranslatorEngine(QObject):
 
         if thread.isRunning():
             thread.request_cancel()
-            if not thread.wait(8000):
+            from PyQt6.QtWidgets import QApplication
+            app = QApplication.instance()
+            deadline = time.monotonic() + 8.0
+            while thread.isRunning() and time.monotonic() < deadline:
+                if app is not None:
+                    app.processEvents()
+                thread.wait(50)
+            if thread.isRunning():
                 logger.warning(
                     "Engine thread 8 sn içinde bitmedi; sinyaller kesildi, "
                     "thread arka planda kapanacak."

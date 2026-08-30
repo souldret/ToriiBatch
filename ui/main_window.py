@@ -955,6 +955,7 @@ class MainWindow(QMainWindow):
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._finish_ignored = True
+            self._job_queue.clear()
             self._engine.cancel()
             self._set_running_state(False)
             self._status_lbl.setText("İptal edildi")
@@ -1071,8 +1072,10 @@ class MainWindow(QMainWindow):
             self._sm.set("source_folder", src)
             self._sm.set("output_folder", out)
             self._source_drop.blockSignals(True)
-            self._source_drop.set_path(src)
-            self._source_drop.blockSignals(False)
+            try:
+                self._source_drop.set_path(src)
+            finally:
+                self._source_drop.blockSignals(False)
             self._update_output_label(out)
             self._scan_chapters(src)
             QTimer.singleShot(400, self._on_start)
@@ -1413,8 +1416,10 @@ class MainWindow(QMainWindow):
         saved_src = sm.get("source_folder", "")
         if saved_src and Path(saved_src).is_dir():
             self._source_drop.blockSignals(True)
-            self._source_drop.set_path(saved_src)
-            self._source_drop.blockSignals(False)
+            try:
+                self._source_drop.set_path(saved_src)
+            finally:
+                self._source_drop.blockSignals(False)
             self._scan_chapters(saved_src)
 
         self._refresh_settings_summary()
