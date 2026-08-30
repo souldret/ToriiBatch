@@ -742,7 +742,7 @@ class DropZoneFrame(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def set_path(self, path: str) -> None:
+    def set_path(self, path: str, emit: bool = True) -> None:
         """
         Seçili klasörü programatik olarak ayarlar ve sinyali yayınlar.
 
@@ -772,7 +772,8 @@ class DropZoneFrame(QWidget):
         self._path_lbl.setText(display)
         self._path_lbl.show()
 
-        self.folder_selected.emit(path)
+        if emit:
+            self.folder_selected.emit(path)
         logger.debug("DropZoneFrame: klasör seçildi → %s", path)
 
     def get_path(self) -> str:

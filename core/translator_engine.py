@@ -788,7 +788,8 @@ class TranslatorEngine(QObject):
             deadline = time.monotonic() + 8.0
             while thread.isRunning() and time.monotonic() < deadline:
                 if app is not None:
-                    app.processEvents()
+                    from PyQt6.QtCore import QEventLoop
+                    app.processEvents(QEventLoop.ProcessEventsFlag.ExcludeUserInputEvents)
                 thread.wait(50)
             if thread.isRunning():
                 logger.warning(
