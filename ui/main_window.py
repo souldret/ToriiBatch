@@ -852,9 +852,13 @@ class MainWindow(QMainWindow):
 
         # Çıktı klasörlerini oluştur
         source_root = self._sm.get("source_folder", "")
-        for ch in selected:
-            out_dir = Path(build_output_path(ch, source_root, output))
-            out_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            for ch in selected:
+                out_dir = Path(build_output_path(ch, source_root, output))
+                out_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            QMessageBox.critical(self, "Disk Hatası", f"Çıktı klasörü oluşturulamadı:\n{exc}")
+            return
 
         # "Kaldığı yerden devam" seçeneği aktifse zaten çevrilmiş sayfaları filtrele
         if self._sm.get("resume_mode", True):
@@ -1066,7 +1070,9 @@ class MainWindow(QMainWindow):
             src, out = self._job_queue.pop(0)
             self._sm.set("source_folder", src)
             self._sm.set("output_folder", out)
+            self._source_drop.blockSignals(True)
             self._source_drop.set_path(src)
+            self._source_drop.blockSignals(False)
             self._update_output_label(out)
             self._scan_chapters(src)
             QTimer.singleShot(400, self._on_start)

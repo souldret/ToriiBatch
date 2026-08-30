@@ -381,10 +381,12 @@ class SettingsManager(QObject):
         if encrypt_sensitive:
             for key in _SENSITIVE_KEYS:
                 raw = to_write.get(key, "")
-                if raw and store_secret(key, raw):
+                if store_secret(key, raw or ""):
                     to_write[key] = ""
                 elif raw:
                     to_write[key] = _encrypt(raw)
+                else:
+                    to_write[key] = ""
         try:
             with self._config_path.open("w", encoding="utf-8") as f:
                 json.dump(to_write, f, ensure_ascii=False, indent=2)

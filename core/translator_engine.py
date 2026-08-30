@@ -252,7 +252,12 @@ class _EngineThread(QThread):
 
         # Çıktı klasörü
         output_dir = Path(build_output_path(chapter, source_root, self._output_root))
-        output_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            output_dir.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            self.error_occurred.emit(chapter.name, f"Çıktı klasörü oluşturulamadı: {exc}", "")
+            self.chapter_finished.emit(chapter.name, False)
+            return
 
         total = chapter.page_count
         completed = 0
@@ -287,6 +292,11 @@ class _EngineThread(QThread):
             await self._wait_if_paused()
 
             if self._cancel_event.is_set():
+                for leftover in output_dir.glob("*.tmp"):
+                    try:
+                        leftover.unlink()
+                    except OSError:
+                        pass
                 break
 
             source_path = Path(image_path)
@@ -319,11 +329,7 @@ class _EngineThread(QThread):
                 )
                 if result.credits_remaining is not None:
                     self.credits_updated.emit(result.credits_remaining)
-                if result.elapsed_seconds > 0:
-                    self._page_times.append(result.elapsed_seconds)
-                    self._pages_left = max(0, self._pages_left - 1)
-                    avg = sum(self._page_times[-20:]) / len(self._page_times[-20:])
-                    self.eta_updated.emit(avg * self._pages_left)
+                self._update_eta(result.elapsed_seconds)
             else:
                 failed += 1
                 consecutive_errors += 1
@@ -338,6 +344,7 @@ class _EngineThread(QThread):
                 if "kaydedilemedi" in err.lower() or "diske" in err.lower():
                     self.log_message.emit("error", f"[{chapter.name}] Disk yazma hatası: {err}")
 
+                self._update_eta(result.elapsed_seconds)
                 if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
                     self.log_message.emit(
                         "error",
@@ -510,6 +517,14 @@ class _EngineThread(QThread):
     # Duraklat yardımcısı
     # ------------------------------------------------------------------
 
+    def _update_eta(self, elapsed: float) -> None:
+        if elapsed > 0:
+            self._page_times.append(elapsed)
+        self._pages_left = max(0, self._pages_left - 1)
+        if self._page_times:
+            avg = sum(self._page_times[-20:]) / len(self._page_times[-20:])
+            self.eta_updated.emit(avg * self._pages_left)
+
     async def _wait_if_paused(self) -> None:
         """
         Duraklat isteği varsa (pause_event clear ise) devam et sinyali
@@ -579,7 +594,8 @@ def _write_image(b64_data: str | None, output_path: Path) -> bool:
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp = output_path.with_suffix(output_path.suffix + ".tmp")
         tmp.write_bytes(image_bytes)
-        tmp.replace(output_path)
+        import os
+        os.replace(tmp, output_path)
         return True
     except Exception as exc:
         logger.error("Görsel kaydedilemedi (%s): %s", output_path, exc)

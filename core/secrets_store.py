@@ -12,8 +12,10 @@ _TARGET_BYOK = "ToriiBatch/byok_key"
 
 
 def _win_cred_set(target: str, value: str) -> bool:
-    if sys.platform != "win32" or not value:
+    if sys.platform != "win32":
         return False
+    if not value:
+        return _win_cred_delete(target)
     try:
         import win32cred  # type: ignore
         win32cred.CredWrite(
@@ -21,7 +23,7 @@ def _win_cred_set(target: str, value: str) -> bool:
                 "Type": win32cred.CRED_TYPE_GENERIC,
                 "TargetName": target,
                 "UserName": "ToriiBatch",
-                "CredentialBlob": value,
+                "CredentialBlob": value.encode("utf-16-le"),
                 "Persist": win32cred.CRED_PERSIST_LOCAL_MACHINE,
             },
             0,
@@ -32,6 +34,17 @@ def _win_cred_set(target: str, value: str) -> bool:
         return False
 
 
+def _win_cred_delete(target: str) -> bool:
+    if sys.platform != "win32":
+        return False
+    try:
+        import win32cred  # type: ignore
+        win32cred.CredDelete(target, win32cred.CRED_TYPE_GENERIC, 0)
+        return True
+    except Exception:
+        return True
+
+
 def _win_cred_get(target: str) -> str | None:
     if sys.platform != "win32":
         return None
@@ -40,7 +53,8 @@ def _win_cred_get(target: str) -> str | None:
         cred = win32cred.CredRead(target, win32cred.CRED_TYPE_GENERIC, 0)
         blob = cred.get("CredentialBlob")
         if isinstance(blob, bytes):
-            return blob.decode("utf-16-le", errors="ignore").rstrip("\x00")
+            text = blob.decode("utf-16-le", errors="ignore").rstrip("\x00")
+            return text or None
         if isinstance(blob, str):
             return blob
     except Exception:

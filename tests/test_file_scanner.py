@@ -26,10 +26,24 @@ def test_resume_ignores_original_and_inpainted(tmp_path: Path) -> None:
     src = tmp_path / "src"
     src.mkdir()
     (src / "01.png").write_bytes(b"x")
-    out = tmp_path / "out"
-    out.mkdir()
-    (out / "01_original.png").write_bytes(b"x")
-    (out / "01_inpainted.png").write_bytes(b"x")
+    out_root = tmp_path / "out"
+    out_dir = out_root / "src"
+    out_dir.mkdir(parents=True)
+    (out_dir / "01_original.png").write_bytes(b"x")
+    (out_dir / "01_inpainted.png").write_bytes(b"x")
     chapter = ChapterInfo(name="src", path=str(src), image_paths=[str(src / "01.png")], page_count=1)
-    filtered = filter_already_translated(chapter, str(out), str(tmp_path))
+    filtered = filter_already_translated(chapter, str(out_root), str(tmp_path))
     assert filtered.page_count == 1
+
+
+def test_resume_skips_translated_page(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "01.png").write_bytes(b"x")
+    out_dir = tmp_path / "out" / "src"
+    out_dir.mkdir(parents=True)
+    (out_dir / "01.png").write_bytes(b"y")
+    chapter = ChapterInfo(name="src", path=str(src), image_paths=[str(src / "01.png")], page_count=1)
+    filtered = filter_already_translated(chapter, str(tmp_path / "out"), str(tmp_path))
+    assert filtered.page_count == 0
+    assert filtered.status == "skipped"
