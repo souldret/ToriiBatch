@@ -264,10 +264,7 @@ class _EngineThread(QThread):
         completed = 0
         failed = 0
         consecutive_errors = 0
-        context_file = output_dir / ".torii_context.json"
         context = "None"
-        if use_context:
-            context = _load_context(context_file)
 
         self.chapter_started.emit(chapter.name)
         self.log_message.emit(
@@ -322,7 +319,6 @@ class _EngineThread(QThread):
                 consecutive_errors = 0
                 if use_context:
                     context = result.next_context
-                    _save_context(context_file, context)
                 self.image_translated.emit(
                     chapter.name,
                     str(result.source_path),
@@ -538,27 +534,6 @@ class _EngineThread(QThread):
 # ---------------------------------------------------------------------------
 # Dosya yazma yardımcısı (asyncio.to_thread ile çağrılır)
 # ---------------------------------------------------------------------------
-
-def _load_context(path: Path) -> str:
-    import json
-    try:
-        if path.is_file():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            ctx = data.get("context")
-            if isinstance(ctx, str) and ctx:
-                return ctx
-    except Exception:
-        pass
-    return "None"
-
-
-def _save_context(path: Path, context: str) -> None:
-    import json
-    try:
-        path.write_text(json.dumps({"context": context}, ensure_ascii=False), encoding="utf-8")
-    except OSError as exc:
-        logger.warning("Context kaydedilemedi: %s", exc)
-
 
 def _copy_file(src: Path, dst: Path) -> None:
     import shutil
