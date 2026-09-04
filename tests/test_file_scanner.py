@@ -6,9 +6,10 @@ from core.file_scanner import ChapterInfo, filter_already_translated, scan_root_
 def test_scan_root_as_single_chapter(tmp_path: Path) -> None:
     (tmp_path / "01.png").write_bytes(b"x")
     (tmp_path / "02.jpg").write_bytes(b"x")
+    (tmp_path / "03.avif").write_bytes(b"x")
     chapters = scan_root_folder(str(tmp_path))
     assert len(chapters) == 1
-    assert chapters[0].page_count == 2
+    assert chapters[0].page_count == 3
 
 
 def test_scan_subfolders(tmp_path: Path) -> None:

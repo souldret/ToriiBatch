@@ -52,6 +52,20 @@ _FONT_NAME_TO_CODE: dict[str, str] = {
 }
 
 
+_CONTENT_TYPES: dict[str, str] = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
+    ".avif": "image/avif",
+}
+
+
+def _content_type_for(path: Path) -> str:
+    return _CONTENT_TYPES.get(path.suffix.lower(), "application/octet-stream")
+
+
 def _resolve_font_code(font: str) -> str:
     """
     UI'daki görünen font adını API'nin beklediği koda çevirir.
@@ -409,7 +423,7 @@ class ToriiAPIClient:
                 "file",
                 bytes(image_bytes),
                 filename=path.name,
-                content_type="application/octet-stream",
+                content_type=_content_type_for(path),
             )
             form.add_field("target_lang", target_lang)
             form.add_field("translator", translator)
@@ -534,7 +548,7 @@ class ToriiAPIClient:
                 "file",
                 bytes(image_bytes),
                 filename=path.name,
-                content_type="application/octet-stream",
+                content_type=_content_type_for(path),
             )
             return form
 

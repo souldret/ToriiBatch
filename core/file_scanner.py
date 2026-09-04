@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Desteklenen görsel uzantıları (küçük harf)
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset(
-    {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+    {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".avif"}
 )
 
 

@@ -1,7 +1,7 @@
 import base64
 from pathlib import Path
 
-from core.api_client import _resolve_font_code
+from core.api_client import _content_type_for, _resolve_font_code
 from core.translator_engine import _write_image
 
 
@@ -9,6 +9,11 @@ def test_font_codes() -> None:
     assert _resolve_font_code("NotoSans") == "noto"
     assert _resolve_font_code("KomikaJam") == "komika"
     assert _resolve_font_code("noto") == "noto"
+
+
+def test_content_type_avif() -> None:
+    assert _content_type_for(Path("page.AVIF")) == "image/avif"
+    assert _content_type_for(Path("page.png")) == "image/png"
 
 
 def test_write_image_strips_data_uri(tmp_path: Path) -> None:
