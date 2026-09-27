@@ -31,6 +31,17 @@ _DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "default_config
 # Şifrelenecek hassas alanlar
 _SENSITIVE_KEYS = {"api_key", "byok_key"}
 
+# toriitranslate.com/api üzerinde kaldırılmış model kodları → güncel karşılık.
+# Kullanıcının elle eklediği (eşleşmeyen) modeller korunur.
+_REMOVED_TRANSLATORS: dict[str, str] = {
+    "gpt-5.6-luna": "gpt-6-luna",
+    "gpt-5.4": "gpt-6-sol",
+    "claude-sonnet-4.6": "claude-sonnet-5",
+    "gemini-3.6-flash": "gemini-3.8-flash",
+}
+
+_CATALOG_KEYS = ("translator_options", "language_options", "font_options")
+
 
 def _get_config_path() -> Path:
     """
@@ -191,7 +202,7 @@ class SettingsManager(QObject):
                 # Eksik anahtarları varsayılanlarla tamamla
                 merged = dict(defaults)
                 merged.update(user_cfg)
-                self._config = merged
+                self._config = self._reconcile_catalog(merged, defaults, user_cfg)
                 logger.debug("Kullanıcı config yüklendi: %s", self._config_path)
             except (json.JSONDecodeError, OSError) as exc:
                 logger.error("Config okunamadı, varsayılanlar kullanılıyor: %s", exc)
@@ -348,6 +359,60 @@ class SettingsManager(QObject):
     # ------------------------------------------------------------------
     # Dahili yardımcılar
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _reconcile_catalog(merged: dict, defaults: dict, user_cfg: dict) -> dict:
+        """
+        Site kataloğuyla uyumsuz model/dil/font listelerini düzeltir.
+
+        Özel eklenen öğeler korunur. Siteden kalkan modeller güncel kodlara
+        taşınır; katalogda olup listede olmayanlar eklenir.
+        """
+        for key in _CATALOG_KEYS:
+            default_items = list(defaults.get(key) or [])
+            user_items = user_cfg.get(key)
+            if not isinstance(user_items, list) or not default_items:
+                merged[key] = default_items
+                continue
+
+            cleaned: list[str] = []
+            for item in user_items:
+                if not isinstance(item, str) or not item.strip():
+                    continue
+                item = item.strip()
+                if key == "translator_options":
+                    item = _REMOVED_TRANSLATORS.get(item, item)
+                if item not in cleaned:
+                    cleaned.append(item)
+
+            extras = [item for item in cleaned if item not in default_items]
+            if extras:
+                # Özel eklenenler başta kalır, sitedeki eksik modeller eklenir.
+                merged[key] = cleaned + [
+                    item for item in default_items if item not in cleaned
+                ]
+            else:
+                # Liste yalnızca eski/güncel katalogsa site sırasını kullan.
+                merged[key] = default_items
+
+        translator = str(merged.get("translator") or "")
+        translator = _REMOVED_TRANSLATORS.get(translator, translator)
+        options = merged.get("translator_options") or []
+        if translator not in options:
+            translator = str(defaults.get("translator") or "gemini-3.1-flash-lite")
+        merged["translator"] = translator
+
+        font = str(merged.get("font") or "")
+        fonts = merged.get("font_options") or []
+        if fonts and font not in fonts:
+            merged["font"] = str(defaults.get("font") or fonts[0])
+
+        lang = str(merged.get("target_lang") or "")
+        langs = merged.get("language_options") or []
+        if langs and lang not in langs:
+            merged["target_lang"] = str(defaults.get("target_lang") or langs[0])
+
+        return merged
 
     @staticmethod
     def _load_defaults() -> dict:

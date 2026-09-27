@@ -20,7 +20,7 @@
   "max_concurrent_requests": 1,
   "theme": "dark",
   "check_updates": true,
+  "translator_options": ["gemini-3.1-flash-lite","gpt-6-luna","deepseek","grok-4.20","kimi-k2.5","gemini-3-flash","gemini-3.8-flash","claude-sonnet-5","gpt-6-sol","claude-opus-5.5"],
   "language_options": ["tr","en","ja","ko","zh-cn","zh-tw","de","fr","es","ru","ar","pt","id","vi","it","pl","nl","th","hi","fil"],
-  "translator_options": ["gemini-3.1-flash-lite","deepseek","gpt-5.6-luna","grok-4.20","kimi-k2.5","gpt-5.4","gemini-3-flash","claude-sonnet-4.6","gemini-3.6-flash"],
   "font_options": ["NotoSans","WildWords","BadComic","MaShanZheng","KomikaJam","Bangers","Edo","RIDIBatang","Bushidoo","Hayah","Itim","MogulIrina","Heroika","Shonen"]
 }
