@@ -308,7 +308,8 @@ class _EngineThread(QThread):
                 source_path=source_path,
                 output_path=output_path,
                 target_lang=target_lang,
-                context=context if use_context else "None",
+                context=context,
+                use_context=use_context,
                 output_format=output_format,
                 save_inpainted=save_inpainted,
                 keep_backup=keep_backup,
@@ -375,6 +376,7 @@ class _EngineThread(QThread):
         output_path: Path,
         target_lang: str,
         context: str,
+        use_context: bool,
         output_format: str,
         save_inpainted: bool,
         keep_backup: bool = False,
@@ -451,7 +453,7 @@ class _EngineThread(QThread):
             bubbles_only=bubbles_only,
             custom_prompt=custom_prompt,
             context=context,
-            use_context=bool(settings.get("use_context_chain", True)),
+            use_context=use_context,
         )
 
         result.elapsed_seconds = time.monotonic() - t_start

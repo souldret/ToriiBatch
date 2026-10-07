@@ -106,8 +106,10 @@ def test_share_credits_rejects_bad_input() -> None:
     client = ToriiAPIClient("tt_test")
     bad_email = asyncio.run(client.share_credits("not-an-email", 1))
     bad_amount = asyncio.run(client.share_credits("a@b.com", 0))
+    fractional = asyncio.run(client.share_credits("a@b.com", 1.5))
     assert bad_email["success"] is False
     assert bad_amount["success"] is False
+    assert fractional["success"] is False
 
 
 def test_byok_fields_are_form_data() -> None:

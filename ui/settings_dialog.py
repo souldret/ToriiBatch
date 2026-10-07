@@ -1013,7 +1013,10 @@ class SettingsDialog(QDialog):
         try:
             amount = float(raw_amount)
         except ValueError:
-            self._share_result_lbl.setText("Miktar sayı olmalı.")
+            self._share_result_lbl.setText("Miktar tam sayı olmalı.")
+            return
+        if not amount.is_integer() or amount <= 0:
+            self._share_result_lbl.setText("Miktar 0'dan büyük bir tam sayı olmalı.")
             return
         self._share_result_lbl.setText("Gönderiliyor…")
 

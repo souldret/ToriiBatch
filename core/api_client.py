@@ -724,7 +724,14 @@ class ToriiAPIClient:
         email = email.strip()
         if not email or "@" not in email:
             return self._error_result("Geçerli bir e-posta adresi gerekli.")
-        credits = int(amount)
+        if isinstance(amount, bool) or (
+            isinstance(amount, float) and not amount.is_integer()
+        ):
+            return self._error_result("Paylaşılacak kredi tam sayı olmalı.")
+        try:
+            credits = int(amount)
+        except (TypeError, ValueError):
+            return self._error_result("Paylaşılacak kredi tam sayı olmalı.")
         if credits <= 0:
             return self._error_result("Paylaşılacak kredi 0'dan büyük bir tam sayı olmalı.")
 
