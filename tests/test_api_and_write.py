@@ -68,3 +68,55 @@ def test_write_image_strips_data_uri(tmp_path: Path) -> None:
     assert _write_image(b64, dest)
     assert dest.read_bytes() == raw
     assert not dest.with_suffix(".png.tmp").exists()
+
+
+def test_finish_request_reads_validation_detail() -> None:
+    from core.api_client import ToriiAPIClient
+
+    client = ToriiAPIClient("tt_test")
+    body = {"detail": [{"msg": "translator is required"}]}
+    result = client._finish_request(422, body, {})
+    assert result["success"] is False
+    assert "translator is required" in result["error"]
+
+
+def test_finish_request_image_payload() -> None:
+    from core.api_client import ToriiAPIClient
+
+    client = ToriiAPIClient("tt_test")
+    body = {
+        "image": "data:image/png;base64,abc",
+        "inpainted": "data:image/png;base64,def",
+        "context": "next",
+        "text": [{"text": "Merhaba"}],
+        "metadata": {"credits_used": 1},
+    }
+    result = client._finish_request(200, body, {"credits": "12.5"})
+    assert result["success"] is True
+    assert result["image_b64"].endswith("abc")
+    assert result["credits_remaining"] == 12.5
+    assert result["context"] == "next"
+    assert result["metadata"]["credits_used"] == 1
+
+
+def test_share_credits_rejects_bad_input() -> None:
+    import asyncio
+    from core.api_client import ToriiAPIClient
+
+    client = ToriiAPIClient("tt_test")
+    bad_email = asyncio.run(client.share_credits("not-an-email", 1))
+    bad_amount = asyncio.run(client.share_credits("a@b.com", 0))
+    assert bad_email["success"] is False
+    assert bad_amount["success"] is False
+
+
+def test_byok_fields_are_form_data() -> None:
+    from core.api_client import ToriiAPIClient
+
+    client = ToriiAPIClient(
+        "tt_test",
+        byok_provider="openai",
+        byok_key="sk-test",
+    )
+    assert client._build_headers() == {"Authorization": "Bearer tt_test"}
+    assert "x-byok-openai" not in client._build_headers()

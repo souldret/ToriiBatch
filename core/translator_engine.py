@@ -451,6 +451,7 @@ class _EngineThread(QThread):
             bubbles_only=bubbles_only,
             custom_prompt=custom_prompt,
             context=context,
+            use_context=bool(settings.get("use_context_chain", True)),
         )
 
         result.elapsed_seconds = time.monotonic() - t_start
@@ -517,7 +518,8 @@ class _EngineThread(QThread):
             self._page_times.append(elapsed)
         self._pages_left = max(0, self._pages_left - 1)
         if self._page_times:
-            avg = sum(self._page_times[-20:]) / len(self._page_times[-20:])
+            recent = self._page_times[-20:]
+            avg = sum(recent) / len(recent)
             self.eta_updated.emit(avg * self._pages_left)
 
     async def _wait_if_paused(self) -> None:

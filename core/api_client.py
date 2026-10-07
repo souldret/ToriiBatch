@@ -2,14 +2,19 @@
 api_client.py - Torii Translate API istemcisi.
 
 Sorumluluğu:
-- POST /api/v2/upload endpoint'ine görsel göndermek ve çevrilmiş görsel + context döndürmek.
-- GET /api/credits endpoint'i ile kredi bakiyesini sorgulamak.
+- POST /api/v2/upload ile görsel çevirmek.
+- POST /api/v2/ocr ile OCR almak.
+- POST /api/inpaint ile maskelenmiş bölgeyi temizlemek.
+- POST /api/typeset ile metin kutularını basmak.
+- GET /api/credits ve GET /api/usage ile bakiyeyi ve kullanımı okumak.
+- POST /api/credits/share ile kredi paylaşmak.
 - 429/503 hatalarında exponential backoff ile otomatik yeniden deneme.
-- BYOK (Bring Your Own Key) başlıklarını yönetmek.
-- Client seviyesinde rate limiting (saniyede 1 istek).
+- BYOK alanlarını multipart form gövdesinde göndermek.
+- İstemci genelinde saniyede 1 istek sınırına uymak.
 """
 
 import asyncio
+import json
 import logging
 import random
 import time
@@ -169,26 +174,28 @@ class ToriiAPIClient:
     # ------------------------------------------------------------------
 
     def _build_headers(self) -> dict[str, str]:
-        """Ortak HTTP başlıklarını oluşturur."""
-        headers: dict[str, str] = {
-            "Authorization": f"Bearer {self._api_key}",
-        }
-        if self._byok_provider and self._byok_key:
-            headers[f"x-byok-{self._byok_provider}"] = self._byok_key
-            if self._byok_provider == "local" and self._byok_local_url:
-                headers["x-byok-local-url"] = self._byok_local_url
-        return headers
+        """Kimlik doğrulama başlığını oluşturur. BYOK form alanıdır, başlık değil."""
+        return {"Authorization": f"Bearer {self._api_key}"}
+
+    def _apply_byok(self, form: aiohttp.FormData) -> None:
+        """
+        BYOK alanlarını form gövdesine ekler.
+
+        API, x-byok-<sağlayıcı> değerini multipart form alanı olarak bekler.
+        Yerel sağlayıcıda x-byok-local-url da zorunludur.
+        """
+        if not self._byok_provider or not self._byok_key:
+            return
+        form.add_field(f"x-byok-{self._byok_provider}", self._byok_key)
+        if self._byok_provider == "local" and self._byok_local_url:
+            form.add_field("x-byok-local-url", self._byok_local_url)
 
     async def _throttle(self) -> None:
         """
         İstekler arasında minimum _MIN_REQUEST_INTERVAL bekler.
-        Her istek öncesinde çağrılmalıdır.
 
-        Lock sadece zaman damgasını okuma/güncelleme sırasında tutulur;
-        sleep sırasında serbest bırakılır.
-
-        Zaman damgası sleep BİTİŞİNDE güncellenir — böylece gerçek aralık
-        her zaman tam olarak _MIN_REQUEST_INTERVAL olur, daha fazla değil.
+        Bekleme kilidin içinde yapılır. Böylece eşzamanlı görevler aynı
+        anda slot alamaz ve saniyede 1 istek sınırı korunur.
         """
         if self._rate_lock is None:
             self._rate_lock = asyncio.Lock()
@@ -196,13 +203,9 @@ class ToriiAPIClient:
             now = time.monotonic()
             elapsed = now - self._last_request_time
             wait = _MIN_REQUEST_INTERVAL - elapsed if elapsed < _MIN_REQUEST_INTERVAL else 0.0
-
-        if wait > 0:
-            logger.debug("Rate limit throttle: %.3f sn bekleniyor.", wait)
-            await asyncio.sleep(wait)
-
-        # Zaman damgasını sleep bittikten sonra güncelle
-        async with self._rate_lock:
+            if wait > 0:
+                logger.debug("Rate limit throttle: %.3f sn bekleniyor.", wait)
+                await asyncio.sleep(wait)
             self._last_request_time = time.monotonic()
 
     @staticmethod
@@ -220,8 +223,83 @@ class ToriiAPIClient:
             "context": "None",
             "text": [],
             "credits_remaining": None,
+            "metadata": None,
+            "data": None,
             "error": message,
         }
+
+    @staticmethod
+    def _credits_from_headers(resp_headers: dict) -> float | None:
+        raw = resp_headers.get("credits") or resp_headers.get("x-credits")
+        if not raw:
+            return None
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _detail_from_body(body) -> str:
+        if isinstance(body, dict):
+            detail = body.get("detail") or body.get("message") or body
+            if isinstance(detail, list):
+                parts = []
+                for item in detail:
+                    if isinstance(item, dict):
+                        parts.append(str(item.get("msg") or item))
+                    else:
+                        parts.append(str(item))
+                return "; ".join(parts) or str(body)
+            return str(detail)
+        if body is None:
+            return ""
+        return str(body)
+
+    def _finish_request(self, status: int, body, resp_headers: dict) -> dict:
+        """HTTP sonucunu standart sonuç sözlüğüne çevirir."""
+        credits_remaining = self._credits_from_headers(resp_headers)
+        if status == 200 and body is not None:
+            if isinstance(body, dict) and body.get("success") is False:
+                return self._error_result(
+                    self._detail_from_body(body) or "API isteği başarısız."
+                )
+            image = body.get("image") if isinstance(body, dict) else None
+            inpainted = body.get("inpainted") if isinstance(body, dict) else None
+            context = body.get("context", "None") if isinstance(body, dict) else "None"
+            text = body.get("text", []) if isinstance(body, dict) else body
+            metadata = body.get("metadata") if isinstance(body, dict) else None
+            if credits_remaining is None and isinstance(body, dict):
+                raw = body.get("credits")
+                if raw is None:
+                    raw = body.get("balance")
+                if raw is not None:
+                    try:
+                        credits_remaining = float(raw)
+                    except (TypeError, ValueError):
+                        credits_remaining = None
+            return {
+                "success": True,
+                "image_b64": image,
+                "inpainted_b64": inpainted,
+                "context": context,
+                "text": text if text is not None else [],
+                "credits_remaining": credits_remaining,
+                "metadata": metadata,
+                "data": body,
+                "error": None,
+            }
+        if status == 401:
+            return self._error_result("API anahtarı geçersiz veya yetkisiz (HTTP 401).")
+        if status in (400, 422):
+            detail = self._detail_from_body(body)
+            return self._error_result(f"Doğrulama hatası (HTTP {status}): {detail}")
+        if status in (429, 503):
+            return self._error_result(
+                f"Rate limit veya servis geçici kapalı (HTTP {status}), max deneme aşıldı."
+            )
+        if status == -1:
+            return self._error_result("Ağ bağlantı hatası: sunucuya ulaşılamadı.")
+        return self._error_result(f"Beklenmeyen hata (HTTP {status}).")
 
     async def _request_with_retry(
         self,
@@ -364,6 +442,7 @@ class ToriiAPIClient:
         bubbles_only: bool = False,
         custom_prompt: str = "",
         context: str = "None",
+        use_context: bool = True,
     ) -> dict:
         """
         Tek bir görseli çevirir.
@@ -430,13 +509,15 @@ class ToriiAPIClient:
             form.add_field("font", _resolve_font_code(font))
             form.add_field("text_align", text_align)
             form.add_field("stroke_disabled", "true" if stroke_disabled else "false")
-            form.add_field("context", context)
+            if use_context:
+                form.add_field("context", context[:10000])
             if min_font_size is not None:
                 form.add_field("min_font_size", str(min_font_size))
             if bubbles_only:
                 form.add_field("bubbles_only", "true")
             if custom_prompt:
                 form.add_field("custom_prompt", custom_prompt[:1000])
+            self._apply_byok(form)
             return form
 
         logger.debug("translate_image: %s → %s (%s)", path.name, target_lang, translator)
@@ -444,45 +525,10 @@ class ToriiAPIClient:
         status, body, resp_headers = await self._request_with_retry(
             "POST", url, headers=headers, data_factory=_make_form, is_rate_sensitive=True
         )
-
-        credits_remaining: float | None = None
-        raw_credits = resp_headers.get("credits") or resp_headers.get("x-credits")
-        if raw_credits:
-            try:
-                credits_remaining = float(raw_credits)
-            except ValueError:
-                pass
-
-        if status == 200 and body is not None:
+        result = self._finish_request(status, body, resp_headers)
+        if result["success"]:
             logger.debug("translate_image başarılı: %s", path.name)
-            return {
-                "success": True,
-                "image_b64": body.get("image"),
-                "inpainted_b64": body.get("inpainted"),
-                "context": body.get("context", "None"),
-                "text": body.get("text", []),
-                "credits_remaining": credits_remaining,
-                "error": None,
-            }
-
-        if status == 401:
-            return self._error_result("API anahtarı geçersiz veya yetkisiz (HTTP 401).")
-
-        if status in (400, 422):
-            detail = ""
-            if isinstance(body, dict):
-                detail = body.get("detail") or body.get("message") or str(body)
-            return self._error_result(f"Doğrulama hatası (HTTP {status}): {detail}")
-
-        if status in (429, 503):
-            return self._error_result(
-                f"Rate limit veya servis geçici kapalı (HTTP {status}), max deneme aşıldı."
-            )
-
-        if status == -1:
-            return self._error_result("Ağ bağlantı hatası: sunucuya ulaşılamadı.")
-
-        return self._error_result(f"Beklenmeyen hata (HTTP {status}).")
+        return result
 
     async def get_credits(self) -> float | None:
         """
@@ -497,21 +543,27 @@ class ToriiAPIClient:
         url = f"{BASE_URL}/api/credits"
 
         logger.debug("get_credits isteği gönderiliyor.")
-        status, body, _ = await self._request_with_retry(
+        status, body, resp_headers = await self._request_with_retry(
             "GET", url, headers=headers, is_rate_sensitive=False
         )
-
-        if status == 200 and isinstance(body, dict):
-            try:
-                credits = float(body["credits"])
-                logger.debug("Kredi bakiyesi: %.4f", credits)
-                return credits
-            except (KeyError, ValueError, TypeError) as exc:
-                logger.warning("Kredi yanıtı ayrıştırılamadı: %s — %s", body, exc)
-                return None
-
-        logger.warning("get_credits başarısız, HTTP %d.", status)
-        return None
+        result = self._finish_request(status, body, resp_headers)
+        if not result["success"]:
+            logger.warning("get_credits başarısız, HTTP %d.", status)
+            return None
+        credits = result.get("credits_remaining")
+        if credits is None and isinstance(body, dict):
+            for key in ("credits", "balance", "remaining"):
+                if key in body:
+                    try:
+                        credits = float(body[key])
+                    except (TypeError, ValueError):
+                        credits = None
+                    break
+        if credits is None:
+            logger.warning("Kredi yanıtı ayrıştırılamadı: %s", body)
+            return None
+        logger.debug("Kredi bakiyesi: %.4f", credits)
+        return credits
 
     async def ocr_image(self, image_path: str) -> dict:
         """
@@ -553,23 +605,136 @@ class ToriiAPIClient:
             return form
 
         logger.debug("ocr_image: %s", path.name)
-        status, body, _ = await self._request_with_retry(
+        status, body, resp_headers = await self._request_with_retry(
             "POST", url, headers=headers, data_factory=_make_form, is_rate_sensitive=True
         )
+        result = self._finish_request(status, body, resp_headers)
+        if result["success"] and isinstance(body, list):
+            result["data"] = body
+            result["text"] = body
+        return result
 
-        if status == 200 and body is not None:
-            return {"success": True, "data": body, "error": None}
+    async def inpaint_image(self, image_path: str, mask_path: str) -> dict:
+        """
+        Maskenin beyaz bölgelerini temizler.
 
-        if status == 401:
-            return {"success": False, "data": None, "error": "API anahtarı geçersiz (HTTP 401)."}
+        POST /api/inpaint — image ve mask dosyaları zorunludur.
+        """
+        image = Path(image_path)
+        mask = Path(mask_path)
+        if not image.is_file():
+            return self._error_result(f"Dosya bulunamadı: {image_path}")
+        if not mask.is_file():
+            return self._error_result(f"Maske bulunamadı: {mask_path}")
+        try:
+            image_bytes = image.read_bytes()
+            mask_bytes = mask.read_bytes()
+        except OSError as exc:
+            return self._error_result(f"Dosya okunamadı: {exc}")
 
-        if status in (400, 422):
-            detail = ""
-            if isinstance(body, dict):
-                detail = body.get("detail") or body.get("message") or str(body)
-            return {"success": False, "data": None, "error": f"Doğrulama hatası (HTTP {status}): {detail}"}
+        url = f"{BASE_URL}/api/inpaint"
 
-        if status == -1:
-            return {"success": False, "data": None, "error": "Ağ bağlantı hatası."}
+        def _make_form() -> aiohttp.FormData:
+            form = aiohttp.FormData()
+            form.add_field(
+                "image",
+                bytes(image_bytes),
+                filename=image.name,
+                content_type=_content_type_for(image),
+            )
+            form.add_field(
+                "mask",
+                bytes(mask_bytes),
+                filename=mask.name,
+                content_type=_content_type_for(mask),
+            )
+            return form
 
-        return {"success": False, "data": None, "error": f"Beklenmeyen hata (HTTP {status})."}
+        status, body, resp_headers = await self._request_with_retry(
+            "POST", url, headers=self._build_headers(), data_factory=_make_form
+        )
+        return self._finish_request(status, body, resp_headers)
+
+    async def typeset_image(
+        self,
+        image_path: str,
+        text_boxes: list[dict],
+        font: str = "NotoSans",
+        min_font_size: int | None = None,
+        stroke_disabled: bool = False,
+    ) -> dict:
+        """
+        Temiz bir görsele metin kutuları basar.
+
+        POST /api/typeset — file ve text_boxes zorunludur.
+        """
+        path = Path(image_path)
+        if not path.is_file():
+            return self._error_result(f"Dosya bulunamadı: {image_path}")
+        if not text_boxes:
+            return self._error_result("Typeset için en az bir metin kutusu gerekli.")
+        try:
+            image_bytes = path.read_bytes()
+        except OSError as exc:
+            return self._error_result(f"Dosya okunamadı: {exc}")
+
+        url = f"{BASE_URL}/api/typeset"
+        payload = json.dumps(text_boxes, ensure_ascii=False)
+
+        def _make_form() -> aiohttp.FormData:
+            form = aiohttp.FormData()
+            form.add_field(
+                "file",
+                bytes(image_bytes),
+                filename=path.name,
+                content_type=_content_type_for(path),
+            )
+            form.add_field("text_boxes", payload)
+            form.add_field("font", _resolve_font_code(font))
+            if min_font_size is not None:
+                form.add_field("min_font_size", str(min_font_size))
+            if stroke_disabled:
+                form.add_field("stroke_disabled", "true")
+            return form
+
+        status, body, resp_headers = await self._request_with_retry(
+            "POST", url, headers=self._build_headers(), data_factory=_make_form
+        )
+        return self._finish_request(status, body, resp_headers)
+
+    async def get_usage(self, days: int = 30) -> dict:
+        """
+        Günlük kullanım sayılarını döndürür.
+
+        GET /api/usage?days= — days 1 ile 730 arasındadır, varsayılan 30.
+        """
+        days = max(1, min(730, int(days)))
+        url = f"{BASE_URL}/api/usage?days={days}"
+        status, body, resp_headers = await self._request_with_retry(
+            "GET", url, headers=self._build_headers(), is_rate_sensitive=False
+        )
+        return self._finish_request(status, body, resp_headers)
+
+    async def share_credits(self, email: str, amount: float) -> dict:
+        """
+        Krediyi başka bir Torii hesabına aktarır.
+
+        POST /api/credits/share — JSON gövde: target_email, shared_credits.
+        """
+        email = email.strip()
+        if not email or "@" not in email:
+            return self._error_result("Geçerli bir e-posta adresi gerekli.")
+        credits = int(amount)
+        if credits <= 0:
+            return self._error_result("Paylaşılacak kredi 0'dan büyük bir tam sayı olmalı.")
+
+        url = f"{BASE_URL}/api/credits/share"
+        payload = {"target_email": email, "shared_credits": credits}
+        status, body, resp_headers = await self._request_with_retry(
+            "POST",
+            url,
+            headers={**self._build_headers(), "Content-Type": "application/json"},
+            data=json.dumps(payload),
+            is_rate_sensitive=False,
+        )
+        return self._finish_request(status, body, resp_headers)

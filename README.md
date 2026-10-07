@@ -9,7 +9,9 @@
 - **Toplu bölüm çevirisi** — Ana klasörün altındaki her alt klasörü bir bölüm olarak tanır; tüm sayfaları sırayla işler.
 - **Otomatik bağlam zinciri (Context Chain)** — Bölüm içindeki sayfalar arasında karakter adları ve terminoloji tutarlılığını korur. Her bölüm kendi bağımsız zincirine sahiptir.
 - **Kaldığı yerden devam** — Daha önce çevrilmiş sayfaları algılar ve atlar; yarım kalan işler sorunsuz sürdürülür.
-- **BYOK (Bring Your Own Key)** — OpenAI, OpenRouter, Google, Anthropic, DeepSeek, xAI veya yerel model API anahtarlarınızı kullanabilirsiniz.
+- **BYOK (Bring Your Own Key)** — OpenAI, OpenRouter, Google, Anthropic, DeepSeek, xAI veya yerel model anahtarı form alanında gönderilir.
+- **Kullanım ve kredi paylaşımı** — Son 30 günün istek sayıları ve başka bir Torii hesabına kredi aktarımı.
+- **OCR, inpaint ve typeset** — Görsel çevirinin yanında metin tanıma, maske temizleme ve metin basma uçları.
 - **Çoklu model desteği** — Gemini, GPT, Claude, DeepSeek ve daha fazlası; model listesi ayarlardan düzenlenebilir.
 - **Özelleştirilebilir çıktı** — PNG/JPG/WebP format seçimi, inpainted (temiz) kopya kaydetme, orijinal yedekleme.
 - **Duraklat / Devam Et / İptal** — Çeviri sürecini kesintisiz yönetin.

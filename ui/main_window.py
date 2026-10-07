@@ -1647,6 +1647,7 @@ class MainWindow(QMainWindow):
                         min_font_size=settings.get("min_font_size") or None,
                         bubbles_only=bool(settings.get("bubbles_only", False)),
                         custom_prompt=settings.get("custom_prompt") or "",
+                        use_context=bool(settings.get("use_context_chain", True)),
                     )
                 finally:
                     await client.close()
@@ -1669,8 +1670,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, kind.upper(), result.get("error") or "İstek başarısız")
             return
         if kind == "ocr":
-            data = result.get("data") or {}
-            QMessageBox.information(self, "OCR", str(data)[:2000])
+            data = result.get("data")
+            if isinstance(data, list):
+                lines = []
+                for item in data[:40]:
+                    if isinstance(item, dict):
+                        text = str(item.get("text") or "").strip()
+                        if text:
+                            lines.append(text)
+                body = "\n".join(lines) or "Metin bulunamadı."
+            else:
+                body = str(data)[:2000]
+            QMessageBox.information(self, "OCR", body[:4000])
             return
         from core.translator_engine import _write_image
         out = Path(image_path).with_name(Path(image_path).stem + "_preview.png")

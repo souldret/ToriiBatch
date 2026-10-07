@@ -364,6 +364,49 @@ class SettingsDialog(QDialog):
         credits_row.addStretch()
         layout.addLayout(credits_row)
 
+        usage_row = QHBoxLayout()
+        usage_row.setSpacing(Metrics.SPACING_SM)
+        usage_btn = QPushButton("Son 30 Gün Kullanım")
+        usage_btn.setIcon(icon("fa5s.chart-bar"))
+        usage_btn.setProperty("class", "secondary")
+        usage_btn.setFixedHeight(32)
+        usage_btn.clicked.connect(self._on_check_usage)
+        self._usage_result_lbl = QLabel("")
+        self._usage_result_lbl.setWordWrap(True)
+        self._usage_result_lbl.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY}; "
+            f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+        )
+        usage_row.addWidget(usage_btn)
+        usage_row.addWidget(self._usage_result_lbl, stretch=1)
+        layout.addLayout(usage_row)
+
+        layout.addWidget(_separator())
+
+        layout.addWidget(_section_label("Kredi Paylaş"))
+        share_row = QHBoxLayout()
+        share_row.setSpacing(Metrics.SPACING_SM)
+        self._share_email = QLineEdit()
+        self._share_email.setPlaceholderText("alici@ornek.com")
+        self._share_amount = QLineEdit()
+        self._share_amount.setPlaceholderText("Tam sayı")
+        self._share_amount.setFixedWidth(90)
+        share_btn = QPushButton("Gönder")
+        share_btn.setProperty("class", "secondary")
+        share_btn.setFixedHeight(32)
+        share_btn.clicked.connect(self._on_share_credits)
+        share_row.addWidget(self._share_email, stretch=1)
+        share_row.addWidget(self._share_amount)
+        share_row.addWidget(share_btn)
+        layout.addLayout(share_row)
+        self._share_result_lbl = QLabel("")
+        self._share_result_lbl.setWordWrap(True)
+        self._share_result_lbl.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY}; "
+            f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+        )
+        layout.addWidget(self._share_result_lbl)
+
         layout.addWidget(_separator())
 
         # ── BYOK ──
@@ -905,6 +948,84 @@ class SettingsDialog(QDialog):
             f"color: {color}; "
             f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
         )
+
+    def _api_key_for_call(self) -> str:
+        return self._api_key_input.text().strip()
+
+    def _run_api_call(self, coro_factory, on_result) -> None:
+        """Arka planda tek seferlik bir API çağrısı çalıştırır."""
+        api_key = self._api_key_for_call()
+        if not api_key:
+            on_result({"success": False, "error": "API anahtarı girilmedi"})
+            return
+
+        def _fetch() -> None:
+            from core.api_client import ToriiAPIClient
+            client = ToriiAPIClient(api_key=api_key)
+
+            async def _run():
+                try:
+                    return await coro_factory(client)
+                finally:
+                    await client.close()
+
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            result = {"success": False, "error": "Bağlantı hatası"}
+            try:
+                result = loop.run_until_complete(_run())
+                loop.run_until_complete(loop.shutdown_asyncgens())
+            except Exception as exc:
+                logger.warning("API çağrısı başarısız: %s", exc)
+                result = {"success": False, "error": str(exc)}
+            finally:
+                loop.close()
+            QTimer.singleShot(0, lambda r=result: on_result(r))
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    @pyqtSlot()
+    def _on_check_usage(self) -> None:
+        self._usage_result_lbl.setText("Sorgulanıyor…")
+
+        def _show(result: dict) -> None:
+            if not result.get("success"):
+                self._usage_result_lbl.setText(result.get("error") or "Kullanım alınamadı")
+                return
+            data = result.get("data") or {}
+            totals = data.get("totals") if isinstance(data, dict) else None
+            if not isinstance(totals, dict):
+                self._usage_result_lbl.setText("Kullanım yanıtı boş.")
+                return
+            parts = [
+                f"{key}: {value}"
+                for key, value in totals.items()
+                if not isinstance(value, (dict, list))
+            ]
+            self._usage_result_lbl.setText(" · ".join(parts[:8]) or "Kayıt yok")
+
+        self._run_api_call(lambda client: client.get_usage(30), _show)
+
+    @pyqtSlot()
+    def _on_share_credits(self) -> None:
+        email = self._share_email.text().strip()
+        raw_amount = self._share_amount.text().strip().replace(",", ".")
+        try:
+            amount = float(raw_amount)
+        except ValueError:
+            self._share_result_lbl.setText("Miktar sayı olmalı.")
+            return
+        self._share_result_lbl.setText("Gönderiliyor…")
+
+        def _show(result: dict) -> None:
+            if result.get("success"):
+                left = result.get("credits_remaining")
+                extra = f" Kalan: {left:.2f}" if isinstance(left, (int, float)) else ""
+                self._share_result_lbl.setText(f"Kredi gönderildi.{extra}")
+            else:
+                self._share_result_lbl.setText(result.get("error") or "Paylaşım başarısız")
+
+        self._run_api_call(lambda client: client.share_credits(email, amount), _show)
 
     @pyqtSlot()
     def _on_prompt_changed(self) -> None:
