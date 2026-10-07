@@ -354,8 +354,11 @@ class _EngineThread(QThread):
             # İlerleme sinyali
             self.chapter_progress.emit(chapter.name, completed + failed, total)
 
-        # Bölüm sonucu
-        success = failed == 0 or (completed > 0 and consecutive_errors < _MAX_CONSECUTIVE_ERRORS)
+        # Bölüm sonucu. İptal veya erken kesilmede başarılı sayılmaz.
+        finished_all = (completed + failed) == total and not self._cancel_event.is_set()
+        success = finished_all and (
+            failed == 0 or consecutive_errors < _MAX_CONSECUTIVE_ERRORS
+        )
         self.chapter_finished.emit(chapter.name, success)
         level = "info" if success else "warning"
         self.log_message.emit(

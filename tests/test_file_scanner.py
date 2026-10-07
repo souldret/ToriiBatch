@@ -48,3 +48,17 @@ def test_resume_skips_translated_page(tmp_path: Path) -> None:
     filtered = filter_already_translated(chapter, str(tmp_path / "out"), str(tmp_path))
     assert filtered.page_count == 0
     assert filtered.status == "skipped"
+
+
+def test_resume_does_not_skip_partial_tmp(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "01.png").write_bytes(b"x")
+    out_dir = tmp_path / "out" / "src"
+    out_dir.mkdir(parents=True)
+    (out_dir / "01.png.tmp").write_bytes(b"partial")
+    chapter = ChapterInfo(
+        name="src", path=str(src), image_paths=[str(src / "01.png")], page_count=1
+    )
+    filtered = filter_already_translated(chapter, str(tmp_path / "out"), str(tmp_path))
+    assert filtered.page_count == 1

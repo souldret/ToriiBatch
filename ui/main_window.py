@@ -1631,7 +1631,13 @@ class MainWindow(QMainWindow):
 
         def _worker() -> None:
             from core.api_client import ToriiAPIClient
-            client = ToriiAPIClient(api_key)
+            provider = settings.get("byok_provider", "none")
+            client = ToriiAPIClient(
+                api_key,
+                byok_provider=None if not provider or provider == "none" else provider,
+                byok_key=settings.get("byok_key") or None,
+                byok_local_url=settings.get("byok_local_url") or None,
+            )
 
             async def _run():
                 try:
