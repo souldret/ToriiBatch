@@ -13,6 +13,8 @@ Sorumluluğu:
 import asyncio
 import base64
 import logging
+import os
+import shutil
 import threading
 import time
 from dataclasses import dataclass, field
@@ -331,15 +333,22 @@ class _EngineThread(QThread):
             else:
                 failed += 1
                 consecutive_errors += 1
-                context = "None"
                 err = result.error or "Bilinmeyen hata"
                 self.error_occurred.emit(chapter.name, err, str(result.source_path))
-                if "401" in err or "yetkisiz" in err.lower():
+                low_err = err.lower()
+                if (
+                    "401" in err
+                    or "403" in err
+                    or "402" in err
+                    or "yetkisiz" in low_err
+                    or "yetersiz kredi" in low_err
+                    or "byok" in low_err
+                ):
                     self._auth_failed = True
                     self._cancel_event.set()
                     self.fatal_error.emit(err)
                     break
-                if "kaydedilemedi" in err.lower() or "diske" in err.lower():
+                if "kaydedilemedi" in low_err or "diske" in low_err:
                     self.log_message.emit("error", f"[{chapter.name}] Disk yazma hatası: {err}")
 
                 self._update_eta(result.elapsed_seconds)
@@ -354,11 +363,9 @@ class _EngineThread(QThread):
             # İlerleme sinyali
             self.chapter_progress.emit(chapter.name, completed + failed, total)
 
-        # Bölüm sonucu. İptal veya erken kesilmede başarılı sayılmaz.
+        # Bölüm sonucu: yalnızca tüm sayfalar hatasız çevrildiyse başarılı.
         finished_all = (completed + failed) == total and not self._cancel_event.is_set()
-        success = finished_all and (
-            failed == 0 or consecutive_errors < _MAX_CONSECUTIVE_ERRORS
-        )
+        success = finished_all and failed == 0
         self.chapter_finished.emit(chapter.name, success)
         level = "info" if success else "warning"
         self.log_message.emit(
@@ -444,6 +451,8 @@ class _EngineThread(QThread):
         min_font_size: int | None = settings.get("min_font_size") or None
         bubbles_only: bool = bool(settings.get("bubbles_only", False))
         custom_prompt: str = settings.get("custom_prompt") or ""
+        reasoning_effort: str = settings.get("reasoning_effort") or "none"
+        source_langs_whitelist = settings.get("source_langs_whitelist") or []
 
         response = await self._client.translate_image(
             image_path=str(source_path),
@@ -457,6 +466,8 @@ class _EngineThread(QThread):
             custom_prompt=custom_prompt,
             context=context,
             use_context=use_context,
+            reasoning_effort=reasoning_effort,
+            source_langs_whitelist=source_langs_whitelist,
         )
 
         result.elapsed_seconds = time.monotonic() - t_start
@@ -505,7 +516,11 @@ class _EngineThread(QThread):
         # Başarı
         result.status = PageStatus.DONE
         result.credits_remaining = response.get("credits_remaining")
-        result.next_context = response.get("context", "None")
+        next_ctx = response.get("context")
+        result.next_context = (
+            next_ctx if isinstance(next_ctx, str) and next_ctx and next_ctx != "None"
+            else context
+        )
 
         self.log_message.emit(
             "info",
@@ -543,16 +558,74 @@ class _EngineThread(QThread):
 # ---------------------------------------------------------------------------
 
 def _copy_file(src: Path, dst: Path) -> None:
-    import shutil
     dst.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(src, dst)
+
+
+_EXT_TO_FORMAT: dict[str, str] = {
+    "png": "png",
+    "jpg": "jpeg",
+    "jpeg": "jpeg",
+    "webp": "webp",
+}
+
+
+def _sniff_format(data: bytes) -> str | None:
+    """Görsel baytlarının biçimini sihirli baytlardan tespit eder."""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpeg"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "webp"
+    return None
+
+
+def _convert_image(data: bytes, target: str) -> bytes | None:
+    """
+    Görseli Qt (QImage) ile hedef biçime dönüştürür.
+
+    JPEG saydamlık desteklemediği için saydam görseller beyaz zemine basılır.
+    Dönüştürme başarısızsa None döner.
+    """
+    try:
+        from PyQt6.QtCore import QBuffer, QIODevice
+        from PyQt6.QtGui import QColor, QImage, QPainter
+    except Exception as exc:  # pragma: no cover - PyQt6 her zaman kurulu
+        logger.error("Görsel dönüştürme için PyQt6 yüklenemedi: %s", exc)
+        return None
+
+    image = QImage.fromData(data)
+    if image.isNull():
+        return None
+
+    qt_format = {"jpeg": "JPG", "png": "PNG", "webp": "WEBP"}[target]
+    if target == "jpeg" and image.hasAlphaChannel():
+        flat = QImage(image.size(), QImage.Format.Format_RGB32)
+        flat.fill(QColor("white"))
+        painter = QPainter(flat)
+        painter.drawImage(0, 0, image)
+        painter.end()
+        image = flat
+
+    buffer = QBuffer()
+    if not buffer.open(QIODevice.OpenModeFlag.WriteOnly):
+        return None
+    quality = -1 if target == "png" else 95
+    ok = image.save(buffer, qt_format, quality)
+    buffer.close()
+    if not ok:
+        return None
+    return bytes(buffer.data())
 
 
 def _write_image(b64_data: str | None, output_path: Path) -> bool:
     """
     Base64 kodlu görsel verisini diske kaydeder.
 
-    ``data:image/...;base64,`` ön ekini otomatik kaldırır.
+    ``data:image/...;base64,`` ön ekini otomatik kaldırır. API görseli PNG
+    olarak döndürür; çıktı uzantısı farklı bir biçimse (jpg/webp) görsel
+    dönüştürülür, böylece dosya uzantısı ile içerik her zaman eşleşir.
 
     Parametreler
     ------------
@@ -568,18 +641,35 @@ def _write_image(b64_data: str | None, output_path: Path) -> bool:
     """
     if not b64_data:
         return False
+    tmp = output_path.with_suffix(output_path.suffix + ".tmp")
     try:
         if "," in b64_data:
             b64_data = b64_data.split(",", 1)[1]
         image_bytes = base64.b64decode(b64_data)
+        if not image_bytes:
+            return False
+
+        target = _EXT_TO_FORMAT.get(output_path.suffix.lower().lstrip("."))
+        source = _sniff_format(image_bytes)
+        if target and source and source != target:
+            converted = _convert_image(image_bytes, target)
+            if converted is None:
+                logger.error(
+                    "Görsel %s biçimine dönüştürülemedi: %s", target, output_path
+                )
+                return False
+            image_bytes = converted
+
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = output_path.with_suffix(output_path.suffix + ".tmp")
         tmp.write_bytes(image_bytes)
-        import os
         os.replace(tmp, output_path)
         return True
     except Exception as exc:
         logger.error("Görsel kaydedilemedi (%s): %s", output_path, exc)
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
         return False
 
 
@@ -905,4 +995,5 @@ class TranslatorEngine(QObject):
             byok_provider=byok_provider,
             byok_key=byok_key,
             byok_local_url=byok_local_url,
+            byok_fallback=bool(self._sm.get("byok_fallback", False)),
         )

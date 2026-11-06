@@ -431,15 +431,26 @@ class SettingsDialog(QDialog):
         form.addRow(self._byok_key_row_lbl, self._byok_key_input)
 
         self._byok_local_url = QLineEdit()
-        self._byok_local_url.setPlaceholderText("http://localhost:11434")
+        self._byok_local_url.setPlaceholderText("https://llm-sunucun.com/v1")
         self._byok_local_url_lbl = QLabel("Base URL:")
         form.addRow(self._byok_local_url_lbl, self._byok_local_url)
 
         layout.addLayout(form)
 
+        self._byok_fallback = QCheckBox(
+            "Anahtarım başarısız olursa Torii modellerine geri dön (x-byok-fallback)"
+        )
+        self._byok_fallback.setToolTip(
+            "Etkinse ve kendi sağlayıcın hata/zaman aşımı verirse, Torii kendi "
+            "modeliyle çevirir ve normal kredi ücretini düşer."
+        )
+        layout.addWidget(self._byok_fallback)
+
         layout.addWidget(_note_label(
-            "BYOK kullanırsan görsel çevirisi kredi başına 1'e sabitlenir; "
-            "kendi API anahtarınla ücretlendirilirsin."
+            "BYOK kullanırsan görsel çevirisi sayfa başına 1 krediye sabitlenir; "
+            "model çağrısı kendi sağlayıcı hesabından ücretlendirilir. Yerel "
+            "sağlayıcıda yerel/özel ağ adresleri kabul edilmez, genel bir tünel "
+            "(örn. Cloudflare Tunnel / ngrok) URL'si girin."
         ))
 
         layout.addStretch()
@@ -498,6 +509,14 @@ class SettingsDialog(QDialog):
         self._translator.setToolTip("Model adını doğrudan yazabilirsiniz")
         form.addRow("Model:", self._translator)
 
+        # Reasoning effort
+        self._reasoning_effort = QComboBox()
+        self._reasoning_effort.addItems(["none", "low", "medium", "high"])
+        self._reasoning_effort.setToolTip(
+            "Modelin çevirmeden önce ne kadar düşüneceği (fazla düşünme daha çok kredi harcar)"
+        )
+        form.addRow("Düşünme Çabası:", self._reasoning_effort)
+
         # Font
         self._font_combo = QComboBox()
         for f in self._sm.get_font_options():
@@ -520,20 +539,31 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._stroke_disabled)
         layout.addWidget(self._bubbles_only)
 
-        # Min font boyutu
+        # Min font boyutu (API aralığı: 6–100; 5 = devre dışı / API varsayılanı 6)
         mf_row = QHBoxLayout()
         mf_row.setSpacing(Metrics.SPACING_SM)
         mf_lbl = QLabel("Min. Yazı Tipi Boyutu:")
         mf_lbl.setStyleSheet(f"color: {Colors.TEXT_PRIMARY}; background: transparent;")
         self._min_font_size = QSpinBox()
-        self._min_font_size.setRange(0, 72)
-        self._min_font_size.setValue(0)
-        self._min_font_size.setSpecialValueText("Opsiyonel")
-        self._min_font_size.setFixedWidth(100)
+        self._min_font_size.setRange(5, 100)
+        self._min_font_size.setValue(5)
+        self._min_font_size.setSpecialValueText("Varsayılan (6)")
+        self._min_font_size.setFixedWidth(130)
         mf_row.addWidget(mf_lbl)
         mf_row.addWidget(self._min_font_size)
         mf_row.addStretch()
         layout.addLayout(mf_row)
+
+        # Kaynak dil beyaz listesi (source_langs_whitelist)
+        wl_row = QHBoxLayout()
+        wl_row.setSpacing(Metrics.SPACING_SM)
+        wl_lbl = QLabel("Kaynak Dil Filtresi:")
+        wl_lbl.setStyleSheet(f"color: {Colors.TEXT_PRIMARY}; background: transparent;")
+        self._source_whitelist = QLineEdit()
+        self._source_whitelist.setPlaceholderText("Boş = tüm diller; örn: ja, ko, zh")
+        wl_row.addWidget(wl_lbl)
+        wl_row.addWidget(self._source_whitelist, stretch=1)
+        layout.addLayout(wl_row)
 
         layout.addWidget(_separator())
 
@@ -747,6 +777,7 @@ class SettingsDialog(QDialog):
             self._byok_provider.setCurrentIndex(idx)
         self._byok_key_input.setText(sm.get("byok_key", ""))
         self._byok_local_url.setText(sm.get("byok_local_url", ""))
+        self._byok_fallback.setChecked(bool(sm.get("byok_fallback", False)))
         self._on_byok_provider_changed(self._byok_provider.currentIndex())
 
         # Sekme 2 — Çeviri
@@ -761,6 +792,7 @@ class SettingsDialog(QDialog):
             self._custom_lang_input.show()
 
         self._set_combo(self._translator, sm.get("translator", ""))
+        self._set_combo(self._reasoning_effort, sm.get("reasoning_effort", "none"))
         self._set_combo(self._font_combo, sm.get("font", "NotoSans"))
         self._set_combo(self._text_align, sm.get("text_align", "auto"))
 
@@ -768,8 +800,14 @@ class SettingsDialog(QDialog):
         self._bubbles_only.setChecked(bool(sm.get("bubbles_only", False)))
         self._use_context.setChecked(bool(sm.get("use_context_chain", True)))
 
-        mf = sm.get("min_font_size") or 0
-        self._min_font_size.setValue(int(mf))
+        mf = sm.get("min_font_size")
+        self._min_font_size.setValue(int(mf) if mf and 6 <= int(mf) <= 100 else 5)
+
+        wl = sm.get("source_langs_whitelist") or []
+        if isinstance(wl, list):
+            self._source_whitelist.setText(", ".join(str(x) for x in wl if x))
+        else:
+            self._source_whitelist.setText(str(wl))
 
         self._custom_prompt.blockSignals(True)
         self._custom_prompt.setPlainText(sm.get("custom_prompt", ""))
@@ -820,6 +858,7 @@ class SettingsDialog(QDialog):
         sm.set("byok_provider", provider_api_map.get(provider_display, "none"))
         sm.set("byok_key",       self._byok_key_input.text().strip())
         sm.set("byok_local_url", self._byok_local_url.text().strip())
+        sm.set("byok_fallback",  self._byok_fallback.isChecked())
 
         # Sekme 2 — Çeviri
         if self._target_lang.currentText() == "— Özel kod gir —":
@@ -828,13 +867,20 @@ class SettingsDialog(QDialog):
             lang = self._target_lang.currentText().strip()
         sm.set("target_lang",       lang)
         sm.set("translator",        self._translator.currentText().strip())
+        sm.set("reasoning_effort",  self._reasoning_effort.currentText().strip() or "none")
         sm.set("font",              self._font_combo.currentText())
         sm.set("text_align",        self._text_align.currentText())
         sm.set("stroke_disabled",   self._stroke_disabled.isChecked())
         sm.set("bubbles_only",      self._bubbles_only.isChecked())
         sm.set("use_context_chain", self._use_context.isChecked())
         mf = self._min_font_size.value()
-        sm.set("min_font_size", mf if mf > 0 else None)
+        sm.set("min_font_size", mf if 6 <= mf <= 100 else None)
+        whitelist = [
+            code.strip().lower()
+            for code in self._source_whitelist.text().replace(";", ",").split(",")
+            if code.strip()
+        ]
+        sm.set("source_langs_whitelist", whitelist)
         sm.set("custom_prompt", self._custom_prompt.toPlainText()[:1000])
 
         # Sekme 3 — Çıktı
@@ -882,6 +928,7 @@ class SettingsDialog(QDialog):
         self._byok_key_row_lbl.setEnabled(not is_none)
         self._byok_local_url.setVisible(is_local)
         self._byok_local_url_lbl.setVisible(is_local)
+        self._byok_fallback.setEnabled(not is_none)
 
     @pyqtSlot(int)
     def _on_lang_changed(self, index: int) -> None:

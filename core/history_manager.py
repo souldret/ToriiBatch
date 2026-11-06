@@ -20,7 +20,8 @@ _DB_VERSION = 1
 
 
 def _get_db_path() -> Path:
-    import os, platform
+    import os
+    import platform
     system = platform.system()
     if system == "Windows":
         base = Path(os.environ.get("APPDATA", str(Path.home() / "AppData" / "Roaming")))

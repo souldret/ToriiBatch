@@ -32,6 +32,7 @@ def test_resume_ignores_original_and_inpainted(tmp_path: Path) -> None:
     out_dir.mkdir(parents=True)
     (out_dir / "01_original.png").write_bytes(b"x")
     (out_dir / "01_inpainted.png").write_bytes(b"x")
+    (out_dir / "01_preview.png").write_bytes(b"x")
     chapter = ChapterInfo(name="src", path=str(src), image_paths=[str(src / "01.png")], page_count=1)
     filtered = filter_already_translated(chapter, str(out_root), str(tmp_path))
     assert filtered.page_count == 1

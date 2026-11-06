@@ -9,8 +9,9 @@
 - **Toplu bölüm çevirisi** — Ana klasörün altındaki her alt klasörü bir bölüm olarak tanır; tüm sayfaları sırayla işler.
 - **Otomatik bağlam zinciri (Context Chain)** — Bölüm içindeki sayfalar arasında karakter adları ve terminoloji tutarlılığını korur. Her bölüm kendi bağımsız zincirine sahiptir.
 - **Kaldığı yerden devam** — Daha önce çevrilmiş sayfaları algılar ve atlar; yarım kalan işler sorunsuz sürdürülür.
-- **BYOK (Bring Your Own Key)** — OpenAI, OpenRouter, Google, Anthropic, DeepSeek, xAI veya yerel model anahtarı form alanında gönderilir.
-- **Kullanım ve kredi paylaşımı** — Son 30 günün istek sayıları ve başka bir Torii hesabına kredi aktarımı.
+- **BYOK (Bring Your Own Key)** — OpenAI, OpenRouter, Google, Anthropic, DeepSeek, xAI veya yerel model anahtarı (`x-byok-*`, `x-byok-local-url`, `x-byok-fallback`) form alanında gönderilir.
+- **Düşünme çabası ve kaynak dil filtresi** — `reasoning_effort` (`none`/`low`/`medium`/`high`) ve `source_langs_whitelist` parametreleri desteklenir.
+- **Kullanım, anahtarlar ve kredi paylaşımı** — Son 30 günün istek sayıları (`/api/usage`), anahtar listesi (`/api/keys`) ve başka bir Torii hesabına kredi aktarımı (`/api/credits/share`).
 - **OCR, inpaint ve typeset** — Görsel çevirinin yanında metin tanıma, maske temizleme ve metin basma uçları.
 - **Çoklu model desteği** — Gemini, GPT, Claude, DeepSeek ve daha fazlası; model listesi ayarlardan düzenlenebilir.
 - **Özelleştirilebilir çıktı** — PNG/JPG/WebP format seçimi, inpainted (temiz) kopya kaydetme, orijinal yedekleme.
@@ -51,7 +52,7 @@ ToriiBatch, çeviri için toriitranslate.com API'sini kullanır. Çeviri yapabil
 
 1. [toriitranslate.com](https://toriitranslate.com) adresine gidin ve hesap oluşturun (veya giriş yapın).
 2. Hesap ayarlarından **API** bölümüne gidin: `https://toriitranslate.com/api`
-3. "API Key" bölümünden anahtarınızı kopyalayın (`tt_...` ile başlar).
+3. Sayfanın altındaki **Manage your API keys** bölümünden bir anahtar oluşturup kopyalayın (`sk_torii_...` veya `tt_...` ile başlar).
 
 ### Anahtarı Uygulamaya Girin
 

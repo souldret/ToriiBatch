@@ -1,7 +1,7 @@
 """Shared monochrome icon helpers for the desktop UI."""
 
-from PyQt6.QtGui import QIcon
 import qtawesome as qta
+from PyQt6.QtGui import QIcon
 
 from ui.theme import Colors
 

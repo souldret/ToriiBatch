@@ -229,7 +229,7 @@ def main() -> None:
 
     # ── Uygulama ikonu ──
     icon_path = Path(__file__).parent / "assets" / "icon.ico"
-    if icon_path.is_file():
+    if icon_path.is_file() and icon_path.stat().st_size > 0:
         from PyQt6.QtGui import QIcon
         app.setWindowIcon(QIcon(str(icon_path)))
         logger.debug("Uygulama ikonu yüklendi: %s", icon_path)

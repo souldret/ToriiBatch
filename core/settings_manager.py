@@ -35,9 +35,12 @@ _SENSITIVE_KEYS = {"api_key", "byok_key"}
 # Kullanıcının elle eklediği (eşleşmeyen) modeller korunur.
 _REMOVED_TRANSLATORS: dict[str, str] = {
     "gpt-5.6-luna": "gpt-6-luna",
-    "gpt-5.4": "gpt-6-sol",
-    "claude-sonnet-4.6": "claude-sonnet-5",
+    "gpt-5.4": "gpt-6.1-sol",
+    "gpt-6-sol": "gpt-6.1-sol",
+    "claude-sonnet-4.6": "claude-sonnet-5.5",
+    "claude-sonnet-5": "claude-sonnet-5.5",
     "gemini-3.6-flash": "gemini-3.8-flash",
+    "deepseek": "deepseek-v4-flash",
 }
 
 _CATALOG_KEYS = ("translator_options", "language_options", "font_options")
@@ -347,13 +350,15 @@ class SettingsManager(QObject):
         dict
         """
         return {
-            "translator":      self.get("translator", "gemini-3.1-flash-lite"),
-            "font":            self.get("font", "NotoSans"),
-            "text_align":      self.get("text_align", "auto"),
-            "stroke_disabled": bool(self.get("stroke_disabled", False)),
-            "min_font_size":   self.get("min_font_size") or None,
-            "bubbles_only":    bool(self.get("bubbles_only", False)),
-            "custom_prompt":   self.get("custom_prompt", ""),
+            "translator":             self.get("translator", "gemini-3.1-flash-lite"),
+            "reasoning_effort":       self.get("reasoning_effort", "none"),
+            "font":                   self.get("font", "NotoSans"),
+            "text_align":             self.get("text_align", "auto"),
+            "stroke_disabled":        bool(self.get("stroke_disabled", False)),
+            "min_font_size":          self.get("min_font_size") or None,
+            "bubbles_only":           bool(self.get("bubbles_only", False)),
+            "source_langs_whitelist": self.get("source_langs_whitelist") or [],
+            "custom_prompt":          self.get("custom_prompt", ""),
         }
 
     # ------------------------------------------------------------------
@@ -398,9 +403,26 @@ class SettingsManager(QObject):
         translator = str(merged.get("translator") or "")
         translator = _REMOVED_TRANSLATORS.get(translator, translator)
         options = merged.get("translator_options") or []
-        if translator not in options:
+        byok_local = str(merged.get("byok_provider") or "").lower() == "local"
+        if not translator:
             translator = str(defaults.get("translator") or "gemini-3.1-flash-lite")
+        elif translator not in options and not byok_local:
+            # Kullanıcının elle girdiği özel model adını koru, listeye de ekle
+            merged["translator_options"] = [translator, *options]
         merged["translator"] = translator
+
+        effort = str(merged.get("reasoning_effort") or "none").lower()
+        if effort not in ("none", "low", "medium", "high"):
+            effort = "none"
+        merged["reasoning_effort"] = effort
+
+        mfs = merged.get("min_font_size")
+        if mfs is not None:
+            try:
+                mfs_int = int(mfs)
+            except (TypeError, ValueError):
+                mfs_int = 0
+            merged["min_font_size"] = mfs_int if 6 <= mfs_int <= 100 else None
 
         font = str(merged.get("font") or "")
         fonts = merged.get("font_options") or []

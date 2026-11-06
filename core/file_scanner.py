@@ -313,7 +313,11 @@ def filter_already_translated(
             if not p.is_file() or p.suffix.lower() not in SUPPORTED_EXTENSIONS:
                 continue
             stem = p.stem.lower()
-            if stem.endswith("_original") or stem.endswith("_inpainted"):
+            if (
+                stem.endswith("_original")
+                or stem.endswith("_inpainted")
+                or stem.endswith("_preview")
+            ):
                 continue
             existing_bases.add(stem)
     except OSError as exc:

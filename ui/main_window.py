@@ -20,11 +20,12 @@ from PyQt6.QtGui import QAction, QCloseEvent, QFont, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
     QFileDialog,
-    QLineEdit,
     QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QProgressBar,
     QPushButton,
@@ -32,10 +33,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QSplitter,
     QStatusBar,
+    QSystemTrayIcon,
     QVBoxLayout,
     QWidget,
-    QMenu,
-    QSystemTrayIcon,
 )
 
 from core.file_scanner import (
@@ -44,8 +44,10 @@ from core.file_scanner import (
     filter_already_translated,
     scan_root_folder,
 )
+from core.history_manager import HistoryManager
 from core.settings_manager import SettingsManager
 from core.translator_engine import TranslatorEngine
+from ui.history_dialog import HistoryDialog
 from ui.icons import icon as make_icon
 from ui.settings_dialog import SettingsDialog
 from ui.theme import Colors, Metrics
@@ -56,8 +58,6 @@ from ui.widgets import (
     LogView,
     StatCard,
 )
-from core.history_manager import HistoryManager
-from ui.history_dialog import HistoryDialog
 
 logger = logging.getLogger(__name__)
 
@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(1100, 700)
         self.resize(1280, 780)
 
-        if _ICON_PATH.exists():
+        if _ICON_PATH.exists() and _ICON_PATH.stat().st_size > 0:
             self.setWindowIcon(QIcon(str(_ICON_PATH)))
 
     # ------------------------------------------------------------------
@@ -1457,7 +1457,7 @@ class MainWindow(QMainWindow):
             self._tray = None
             return
         self._tray = QSystemTrayIcon(self)
-        if _ICON_PATH.exists():
+        if _ICON_PATH.exists() and _ICON_PATH.stat().st_size > 0:
             self._tray.setIcon(QIcon(str(_ICON_PATH)))
         else:
             from PyQt6.QtWidgets import QStyle
@@ -1569,9 +1569,9 @@ class MainWindow(QMainWindow):
         threading.Thread(target=self._fetch_latest_release, daemon=True).start()
 
     def _fetch_latest_release(self) -> None:
-        import urllib.request
         import json as _json
         import logging as _log
+        import urllib.request
         _logger = _log.getLogger(__name__)
         try:
             url = "https://api.github.com/repos/souldret/ToriiBatch/releases/latest"
@@ -1637,6 +1637,7 @@ class MainWindow(QMainWindow):
                 byok_provider=None if not provider or provider == "none" else provider,
                 byok_key=settings.get("byok_key") or None,
                 byok_local_url=settings.get("byok_local_url") or None,
+                byok_fallback=bool(settings.get("byok_fallback", False)),
             )
 
             async def _run():
@@ -1654,6 +1655,8 @@ class MainWindow(QMainWindow):
                         bubbles_only=bool(settings.get("bubbles_only", False)),
                         custom_prompt=settings.get("custom_prompt") or "",
                         use_context=bool(settings.get("use_context_chain", True)),
+                        reasoning_effort=settings.get("reasoning_effort") or "none",
+                        source_langs_whitelist=settings.get("source_langs_whitelist") or [],
                     )
                 finally:
                     await client.close()
