@@ -823,6 +823,13 @@ class SettingsDialog(QDialog):
                 f"color: {Colors.ACCENT}; "
                 f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
             )
+        else:
+            self._output_folder_lbl.setText("Seçilmedi")
+            self._output_folder_lbl.setToolTip("")
+            self._output_folder_lbl.setStyleSheet(
+                f"color: {Colors.TEXT_SECONDARY}; "
+                f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+            )
 
         self._set_combo(self._output_format, sm.get("output_image_format", "png"))
         self._max_concurrent.setValue(int(sm.get("max_concurrent_requests", 1)))
@@ -893,7 +900,11 @@ class SettingsDialog(QDialog):
         sm.set("resume_mode",             self._resume_mode.isChecked())
 
         # Sekme 4 — Gelişmiş listeler
-        sm.set_translator_options(self._translator_list.get_items())
+        translators = self._translator_list.get_items()
+        current_translator = self._translator.currentText().strip()
+        if current_translator and current_translator not in translators:
+            translators.insert(0, current_translator)
+        sm.set_translator_options(translators)
         sm.set("language_options", self._language_list.get_items())
         sm.set("theme", "light" if self._theme_combo.currentText() == "Açık" else "dark")
         sm.set("check_updates", self._check_updates.isChecked())
@@ -910,6 +921,7 @@ class SettingsDialog(QDialog):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
+            self._pending_output_folder = None
             self._sm.reset_to_defaults()
             self._load_values()
 

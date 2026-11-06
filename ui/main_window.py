@@ -821,6 +821,11 @@ class MainWindow(QMainWindow):
         dlg = SettingsDialog(self._sm, self)
         if dlg.exec():
             self._refresh_settings_summary()
+            out = self._sm.get("output_folder", "")
+            if out:
+                self._update_output_label(out)
+            if self._sm.get_api_key():
+                self._refresh_credits()
 
     def _on_rescan(self) -> None:
         src = self._sm.get("source_folder", "")
@@ -861,15 +866,23 @@ class MainWindow(QMainWindow):
             return
 
         # "Kaldığı yerden devam" seçeneği aktifse zaten çevrilmiş sayfaları filtrele
+        for _, (card, _) in self._chapter_rows.items():
+            card.reset()
+
         if self._sm.get("resume_mode", True):
             filtered: list[ChapterInfo] = []
             for ch in selected:
                 fch = filter_already_translated(ch, output, source_root)
+                row = self._chapter_rows.get(ch.name)
                 if fch.status == "skipped":
+                    if row:
+                        row[0].set_status("skipped")
                     self._log_view.append_log(
                         "info", f"[{ch.name}] Tüm sayfalar zaten çevrilmiş, atlanıyor."
                     )
                 elif fch.page_count > 0:
+                    if row and fch.page_count != ch.page_count:
+                        row[0].set_total_pages(fch.page_count)
                     filtered.append(fch)
             if not filtered:
                 QMessageBox.information(
@@ -913,14 +926,12 @@ class MainWindow(QMainWindow):
         self._stat_total.set_value(str(total_pages))
         self._stat_done.set_value("0")
         self._stat_failed.set_value("0")
+        self._eta_text = ""
         self._main_progress.setRange(0, total_pages)
         self._main_progress.setValue(0)
         self._progress_lbl.setText(
             f"Genel İlerleme: 0/{total_pages} sayfa — Bölüm 0/{self._total_chapters}"
         )
-
-        for name, (card, _) in self._chapter_rows.items():
-            card.reset()
 
         self._finish_ignored = False
         self._set_running_state(True)
@@ -957,6 +968,9 @@ class MainWindow(QMainWindow):
             self._finish_ignored = True
             self._job_queue.clear()
             self._engine.cancel()
+            for _, (card, _) in self._chapter_rows.items():
+                if card.status == "in_progress":
+                    card.set_status("cancelled")
             self._set_running_state(False)
             self._status_lbl.setText("İptal edildi")
             self._log_view.append_log("warning", "Çeviri kullanıcı tarafından iptal edildi.")
@@ -1200,6 +1214,13 @@ class MainWindow(QMainWindow):
         self._done_chapters     = 0
         self._total_chapters    = len(retry_chapters)
         self._failed_page_paths = {}
+        self._eta_text          = ""
+
+        for ch in retry_chapters:
+            row = self._chapter_rows.get(ch.name)
+            if row:
+                row[0].set_total_pages(ch.page_count)
+                row[0].set_status("pending")
 
         self._main_progress.setRange(0, total_retry)
         self._main_progress.setValue(0)
@@ -1416,8 +1437,10 @@ class MainWindow(QMainWindow):
 
         self._refresh_settings_summary()
 
-        # API anahtarı yoksa uyarı
-        if not sm.get_api_key():
+        # API anahtarı varsa bakiyeyi çek, yoksa uyarı göster
+        if sm.get_api_key():
+            self._refresh_credits()
+        else:
             QTimer.singleShot(300, self._warn_missing_api_key)
 
     def _warn_missing_api_key(self) -> None:
@@ -1675,6 +1698,9 @@ class MainWindow(QMainWindow):
         self._log_view.append_log("info", f"{kind.upper()}: {Path(image_path).name}")
 
     def _show_single_page_result(self, kind: str, image_path: str, result: dict) -> None:
+        credits = result.get("credits_remaining")
+        if isinstance(credits, (int, float)):
+            self._credits_badge.update_credits(float(credits))
         if not result.get("success"):
             QMessageBox.warning(self, kind.upper(), result.get("error") or "İstek başarısız")
             return
@@ -1693,7 +1719,10 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "OCR", body[:4000])
             return
         from core.translator_engine import _write_image
-        out = Path(image_path).with_name(Path(image_path).stem + "_preview.png")
+        fmt = (self._sm.get("output_image_format") or "png").strip().lower()
+        if fmt not in ("png", "jpg", "webp"):
+            fmt = "png"
+        out = Path(image_path).with_name(f"{Path(image_path).stem}_preview.{fmt}")
         if _write_image(result.get("image_b64"), out):
             self._log_view.append_log("success", f"Önizleme kaydedildi: {out}")
             try:

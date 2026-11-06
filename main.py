@@ -180,16 +180,14 @@ def _on_about_to_quit(window) -> None:
     """
     QApplication.aboutToQuit sinyaline bağlanan slot.
 
-    Çeviri motoru hâlâ çalışıyorsa ayarları kaydet.
-    (Kullanıcı onayı closeEvent'te yönetilir; burada sadece temizlik.)
+    Çeviri motoru hâlâ çalışıyorsa iptal eder.
+    (Ayarlar ve DB kapatma closeEvent'te yönetilir.)
     """
     logger = logging.getLogger(__name__)
     try:
         if window._engine.is_running():
             window._engine.cancel()
             logger.info("aboutToQuit: çalışan motor iptal edildi.")
-        window._sm.save()
-        logger.info("Ayarlar kaydedildi.")
     except Exception as exc:
         logger.warning("Kapanış temizliği sırasında hata: %s", exc)
 

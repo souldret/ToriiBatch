@@ -258,6 +258,8 @@ class SettingsManager(QObject):
         """
         self._config = self._load_defaults()
         self._ensure_config_dir()
+        for key in _SENSITIVE_KEYS:
+            store_secret(key, "")
         self._write_to_disk(self._config, encrypt_sensitive=False)
         self.settings_changed.emit(dict(self._config))
         logger.info("Ayarlar varsayılanlara sıfırlandı.")

@@ -109,7 +109,9 @@ class ChapterListItemWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("ChapterListItemWidget")
         self._chapter_name = chapter_name
+        self._initial_page_count = page_count
         self._page_count = page_count
+        self._status = "pending"
 
         self._build_ui()
         self.set_status("pending")
@@ -193,6 +195,7 @@ class ChapterListItemWidget(QWidget):
         status : str
             "pending", "in_progress", "done", "error", "skipped", "cancelled"
         """
+        self._status = status
         self._dot.set_status(status)
 
         if status == "in_progress":
@@ -229,11 +232,25 @@ class ChapterListItemWidget(QWidget):
         self._progress_bar.setValue(min(total_done, self._page_count))
         self._page_label.setText(f"{total_done}/{self._page_count}")
 
+    def set_total_pages(self, total: int) -> None:
+        """Aktif işlemdeki sayfa sayısını günceller (resume / retry için)."""
+        self._page_count = max(0, int(total))
+        self._progress_bar.setRange(0, self._page_count if self._page_count > 0 else 1)
+        self._progress_bar.setValue(0)
+        self._page_label.setText(f"{self._page_count} sayfa")
+
     def reset(self) -> None:
         """Widget'ı başlangıç durumuna döndürür."""
+        self._page_count = self._initial_page_count
+        self._progress_bar.setRange(0, self._page_count if self._page_count > 0 else 1)
         self._progress_bar.setValue(0)
         self._page_label.setText(f"{self._page_count} sayfa")
         self.set_status("pending")
+
+    @property
+    def status(self) -> str:
+        """Bölümün mevcut durumu."""
+        return self._status
 
     @property
     def chapter_name(self) -> str:
