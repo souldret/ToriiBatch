@@ -71,32 +71,40 @@ class ChapterInfo:
 # ---------------------------------------------------------------------------
 
 def _collect_images(directory: Path) -> list[str]:
+    """Verilen klasordeki desteklenen gorselleri siralar.
+
+    Dogrudan dosya yoksa bir ve iki alt seviyeye iner.
+    Klasorde zaten sayfa varsa alt klasor karistirilmaz.
     """
-    Verilen klasördeki desteklenen görsel dosyalarını natsort ile sıralar.
+    def _files_here(folder: Path) -> list[Path]:
+        try:
+            return [
+                p
+                for p in folder.iterdir()
+                if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
+            ]
+        except OSError as exc:
+            logger.warning("Klasor okunamadi (%s): %s", folder, exc)
+            return []
 
-    Alt klasörlere inilmez; yalnızca doğrudan alt dosyalar taranır.
-
-    Parametreler
-    ------------
-    directory : Path
-        Taranacak klasör.
-
-    Dönüş
-    -----
-    list[str]
-        Tam dosya yollarından oluşan, natsort ile sıralanmış liste.
-        Görsel bulunamazsa boş liste döner.
-    """
-    try:
-        files = [
-            p for p in directory.iterdir()
-            if p.is_file() and p.suffix.lower() in SUPPORTED_EXTENSIONS
-        ]
-    except OSError as exc:
-        logger.warning("Klasör okunamadı (%s): %s", directory, exc)
-        return []
+    files = _files_here(directory)
+    if not files:
+        try:
+            kids = [p for p in directory.iterdir() if p.is_dir()]
+        except OSError:
+            kids = []
+        for kid in kids:
+            nested = _files_here(kid)
+            if nested:
+                files.extend(nested)
+                continue
+            try:
+                grand = [p for p in kid.iterdir() if p.is_dir()]
+            except OSError:
+                grand = []
+            for grandkid in grand:
+                files.extend(_files_here(grandkid))
     return [str(p) for p in natsorted(files, key=lambda p: p.name)]
-
 
 # ---------------------------------------------------------------------------
 # Public API

@@ -15,7 +15,7 @@ import threading
 import time
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QAction, QCloseEvent, QFont, QIcon
 from PyQt6.QtWidgets import (
     QCheckBox,
@@ -168,6 +168,14 @@ class _ToastBar(QWidget):
 # Ana pencere
 # ---------------------------------------------------------------------------
 
+class _UiBridge(QObject):
+    """Worker thread sinyalini GUI thread kuyruguna koyar."""
+
+    credits = pyqtSignal(float)
+    update = pyqtSignal(str, str)
+    single_page = pyqtSignal(str, str, object)
+
+
 class MainWindow(QMainWindow):
     """
     ToriiBatch ana penceresi.
@@ -229,6 +237,10 @@ class MainWindow(QMainWindow):
         self._setup_window()
         self._build_ui()
         self._connect_engine_signals()
+        self._ui_bridge = _UiBridge(self)
+        self._ui_bridge.credits.connect(self._credits_badge.update_credits)
+        self._ui_bridge.update.connect(self._show_update_toast)
+        self._ui_bridge.single_page.connect(self._show_single_page_result)
         self._build_menu()
         self._restore_state()
         self._setup_tray()
@@ -1394,9 +1406,7 @@ class MainWindow(QMainWindow):
                 loop.close()
 
             if credits is not None:
-                QTimer.singleShot(
-                    0, lambda c=credits: self._credits_badge.update_credits(c)
-                )
+                self._ui_bridge.credits.emit(float(credits))
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -1606,7 +1616,7 @@ class MainWindow(QMainWindow):
             html_url = data.get("html_url", "")
             current = "v1.0.0"
             if tag and tag != current:
-                QTimer.singleShot(0, lambda: self._show_update_toast(name, html_url))
+                self._ui_bridge.update.emit(str(name), str(html_url))
         except Exception as exc:
             _logger.debug("Güncelleme kontrolü başarısız: %s", exc)
 
@@ -1692,7 +1702,7 @@ class MainWindow(QMainWindow):
                 result = {"success": False, "error": str(exc)}
             finally:
                 loop.close()
-            QTimer.singleShot(0, lambda r=result: self._show_single_page_result(kind, image_path, r))
+            self._ui_bridge.single_page.emit(kind, image_path, result)
 
         threading.Thread(target=_worker, daemon=True).start()
         self._log_view.append_log("info", f"{kind.upper()}: {Path(image_path).name}")

@@ -63,3 +63,17 @@ def test_resume_does_not_skip_partial_tmp(tmp_path: Path) -> None:
     )
     filtered = filter_already_translated(chapter, str(tmp_path / "out"), str(tmp_path))
     assert filtered.page_count == 1
+
+
+def test_scan_nested_chapter_images(tmp_path: Path) -> None:
+    ch = tmp_path / "Chapter 20"
+    images = ch / "images"
+    images.mkdir(parents=True)
+    (images / "01.png").write_bytes(b"x")
+    (images / "02.jpg").write_bytes(b"x")
+    empty = tmp_path / "Chapter 21"
+    empty.mkdir()
+    chapters = scan_root_folder(str(tmp_path))
+    assert len(chapters) == 1
+    assert chapters[0].name == "Chapter 20"
+    assert chapters[0].page_count == 2

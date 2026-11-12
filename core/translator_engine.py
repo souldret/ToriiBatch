@@ -33,7 +33,7 @@ from core.file_scanner import ChapterInfo, build_output_path
 
 logger = logging.getLogger(__name__)
 
-# Üst üste bu kadar sayfa hata alırsa bölüm atlanır
+# Ust uste bu kadar sayfa hata alirsa uyari; bolum durmaz
 _MAX_CONSECUTIVE_ERRORS: int = 3
 
 
@@ -336,14 +336,7 @@ class _EngineThread(QThread):
                 err = result.error or "Bilinmeyen hata"
                 self.error_occurred.emit(chapter.name, err, str(result.source_path))
                 low_err = err.lower()
-                if (
-                    "401" in err
-                    or "403" in err
-                    or "402" in err
-                    or "yetkisiz" in low_err
-                    or "yetersiz kredi" in low_err
-                    or "byok" in low_err
-                ):
+                if _is_fatal_api_error(err):
                     self._auth_failed = True
                     self._cancel_event.set()
                     self.fatal_error.emit(err)
@@ -352,13 +345,12 @@ class _EngineThread(QThread):
                     self.log_message.emit("error", f"[{chapter.name}] Disk yazma hatası: {err}")
 
                 self._update_eta(result.elapsed_seconds)
-                if consecutive_errors >= _MAX_CONSECUTIVE_ERRORS:
+                if consecutive_errors == _MAX_CONSECUTIVE_ERRORS:
                     self.log_message.emit(
-                        "error",
-                        f"[{chapter.name}] {_MAX_CONSECUTIVE_ERRORS} ardışık hata, "
-                        f"bölüm atlanıyor.",
+                        "warning",
+                        f"[{chapter.name}] {_MAX_CONSECUTIVE_ERRORS} ardisik hata; "
+                        "kalan sayfalar denenmeye devam ediyor.",
                     )
-                    break
 
             # İlerleme sinyali
             self.chapter_progress.emit(chapter.name, completed + failed, total)
@@ -556,6 +548,24 @@ class _EngineThread(QThread):
 # ---------------------------------------------------------------------------
 # Dosya yazma yardımcısı (asyncio.to_thread ile çağrılır)
 # ---------------------------------------------------------------------------
+
+def _is_fatal_api_error(err: str) -> bool:
+    """Auth, kredi veya BYOK kurulum hatasi tum isi keser."""
+    low = err.lower()
+    markers = (
+        "http 401",
+        "http 402",
+        "http 403",
+        "yetkisiz",
+        "yetersiz kredi",
+        "api anahtarı geçersiz",
+        "byok sağlayıc",
+        "byok için",
+        "byok base",
+        "bilinmeyen byok",
+    )
+    return any(marker in low for marker in markers)
+
 
 def _copy_file(src: Path, dst: Path) -> None:
     dst.parent.mkdir(parents=True, exist_ok=True)
