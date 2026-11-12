@@ -6,12 +6,13 @@ Sorumluluğu:
 - POST /api/v2/ocr ile OCR almak.
 - POST /api/inpaint ile maskelenmiş bölgeyi temizlemek.
 - POST /api/typeset ile metin kutularını basmak.
+- POST /api/colorize ile siyah-beyaz görseli renklendirmek.
 - GET /api/credits ve GET /api/usage ile bakiyeyi ve kullanımı okumak.
 - GET /api/keys ile hesaptaki API anahtarlarını listelemek.
 - POST /api/credits/share ile kredi paylaşmak.
 - 429/503 hatalarında exponential backoff ile otomatik yeniden deneme.
 - BYOK alanlarını (x-byok-*, x-byok-local-url, x-byok-fallback) multipart
-  form gövdesinde göndermek.
+    form gövdesinde göndermek.
 - İstemci genelinde saniyede 1 istek sınırına uymak.
 
 Referans: https://toriitranslate.com/api
@@ -46,8 +47,18 @@ _MIN_REQUEST_INTERVAL = 1.0  # saniye
 MAX_FILE_BYTES = 50 * 1024 * 1024   # 50 MB
 MAX_CONTEXT_CHARS = 10_000          # API yalnızca son 10.000 karakteri tutar
 MAX_CUSTOM_PROMPT_CHARS = 1_000
+MAX_COLORIZE_PROMPT_CHARS = 2_100
 MIN_FONT_SIZE_RANGE = (6, 100)
 DEFAULT_TRANSLATOR = "gemini-3.1-flash-lite"
+DEFAULT_COLORIZE_MODEL = "muse"
+COLORIZE_MODELS: tuple[str, ...] = ("local", "muse", "gpt", "grok", "gemini")
+# Colorize BYOK, çeviri BYOK'undan ayrı: model → form alanı.
+COLORIZE_BYOK_FIELDS: dict[str, str] = {
+    "muse": "x-byok-openrouter",
+    "gpt": "x-byok-openrouter",
+    "grok": "x-byok-xai",
+    "gemini": "x-byok-google",
+}
 REASONING_EFFORTS: tuple[str, ...] = ("none", "low", "medium", "high")
 TEXT_ALIGNS: tuple[str, ...] = ("auto", "left", "center", "right")
 BYOK_PROVIDERS: tuple[str, ...] = (
@@ -71,8 +82,55 @@ _FONT_NAME_TO_CODE: dict[str, str] = {
     "hayah": "hayah",
     "itim": "itim",
     "mogulirina": "mogul",
+    "mogul irina": "mogul",
     "heroika": "heroika",
     "shonen": "shonen",
+    "kalam": "kalam",
+    "hindsiliguri": "hindsiliguri",
+    "shantellsans": "shantellsans",
+    "shantellsansinformal": "shantellsansinformal",
+    "vazirmatn": "vazirmatn",
+    "pretendard": "pretendard",
+    "zenmarugothic": "zenmarugothic",
+    "chillround": "chillround",
+    "cairo": "cairo",
+    "pangolin": "pangolin",
+    "mansalva": "mansalva",
+    "patrickhand": "patrickhand",
+    "poetsenone": "poetsenone",
+    "balsamiqsans": "balsamiqsans",
+    "lilitaone": "lilitaone",
+    "estedad": "estedad",
+    "marhey": "marhey",
+    "gveretlevin": "gveretlevin",
+    "kodchasan": "kodchasan",
+    "poorstory": "poorstory",
+    "nanumpenscript": "nanumpenscript",
+    "zcoolkuaile": "zcoolkuaile",
+    "chilanka": "chilanka",
+    "agbalumo": "agbalumo",
+    "atma": "atma",
+    "koulen": "koulen",
+    "yatraone": "yatraone",
+    "akayakanadaka": "akayakanadaka",
+    "mogra": "mogra",
+    "anekodia": "anekodia",
+    "langar": "langar",
+    "kavivanar": "kavivanar",
+    "akayatelivigala": "akayatelivigala",
+    "yaldevi": "yaldevi",
+    "anekmalayalam": "anekmalayalam",
+    "notoserifmyanmar": "notoserifmyanmar",
+    "phetsarath": "phetsarath",
+    "kantumruypro": "kantumruypro",
+    "eeyek": "eeyek",
+    "gurugomke": "gurugomke",
+    "montserratarmenian": "montserratarmenian",
+    "firago": "firago",
+    "fredoka": "fredoka",
+    "abyssinicasil": "abyssinicasil",
+    "scheherazadenew": "scheherazadenew",
+    "iansui": "iansui",
 }
 
 
@@ -198,7 +256,7 @@ class ToriiAPIClient:
 
         TCPConnector ile connection pooling aktif edilir:
         - limit=10: aynı anda en fazla 10 bağlantı (API sıralı çalıştığından
-          pratikte 1 yeterli, ancak retry/timeout senaryoları için tolerans)
+            pratikte 1 yeterli, ancak retry/timeout senaryoları için tolerans)
         - keepalive_timeout=30: boşta bağlantıyı 30 sn açık tutar
         """
         if self._session_lock is None:
@@ -654,15 +712,15 @@ class ToriiAPIClient:
         -----
         dict
             {
-              "success": bool,
-              "status": int | None,
-              "image_b64": str | None,    # data URI dahil tam base64 string
-              "inpainted_b64": str | None,
-              "context": str,
-              "text": list,
-              "credits_remaining": float | None,
-              "metadata": dict | None,
-              "error": str | None
+                "success": bool,
+                "status": int | None,
+                "image_b64": str | None,    # data URI dahil tam base64 string
+                "inpainted_b64": str | None,
+                "context": str,
+                "text": list,
+                "credits_remaining": float | None,
+                "metadata": dict | None,
+                "error": str | None
             }
         """
         path = Path(image_path)
@@ -923,6 +981,64 @@ class ToriiAPIClient:
             form.add_field("stroke_disabled", "true" if stroke_disabled else "false")
             return form
 
+        status, body, resp_headers = await self._request_with_retry(
+            "POST", url, headers=self._build_headers(), data_factory=_make_form
+        )
+        return self._finish_request(status, body, resp_headers)
+
+    async def colorize_image(
+        self,
+        image_path: str,
+        model: str = DEFAULT_COLORIZE_MODEL,
+        prompt: str | None = None,
+        byok_key: str | None = None,
+    ) -> dict:
+        """
+        Siyah-beyaz gorsele renk ekler.
+
+        POST /api/colorize -- image zorunlu, colorize_model ve
+        colorize_prompt opsiyonel. Model: local (1), muse (12, varsayilan),
+        gpt (16), grok (25), gemini (46) kredi. local prompt ve BYOK almaz.
+        BYOK alanlari modele ozeldir (openrouter / xai / google) ve duz BYOK'tan
+        ayri gonderilir; verilirse istek 1 krediye duser.
+        Yanit JPEG data-URL'sidir (image).
+        """
+        path = Path(image_path)
+        image_bytes, err = self._read_image(path)
+        if err:
+            return self._error_result(err)
+
+        chosen = (model or DEFAULT_COLORIZE_MODEL).strip().lower()
+        if chosen not in COLORIZE_MODELS:
+            return self._error_result(
+                "Gecersiz colorize modeli. Gecerli: " + ", ".join(COLORIZE_MODELS) + "."
+            )
+
+        hint = ""
+        if chosen != "local" and prompt:
+            hint = str(prompt).strip()[:MAX_COLORIZE_PROMPT_CHARS]
+
+        own_key = (byok_key or "").strip()
+        byok_field = COLORIZE_BYOK_FIELDS.get(chosen) if own_key and chosen != "local" else None
+
+        url = f"{BASE_URL}/api/colorize"
+
+        def _make_form() -> aiohttp.FormData:
+            form = aiohttp.FormData()
+            form.add_field(
+                "image",
+                bytes(image_bytes),
+                filename=path.name,
+                content_type=_content_type_for(path),
+            )
+            form.add_field("colorize_model", chosen)
+            if hint:
+                form.add_field("colorize_prompt", hint)
+            if byok_field:
+                form.add_field(byok_field, own_key)
+            return form
+
+        logger.debug("colorize_image: %s model=%s", path.name, chosen)
         status, body, resp_headers = await self._request_with_retry(
             "POST", url, headers=self._build_headers(), data_factory=_make_form
         )

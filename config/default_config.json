@@ -25,5 +25,7 @@
   "check_updates": true,
   "translator_options": ["gemini-3.1-flash-lite","gpt-6-luna","deepseek-v4-flash","grok-4.20","kimi-k2.5","gemini-3-flash","gemini-3.8-flash","claude-sonnet-5.5","gpt-6.1-sol","claude-opus-5.5"],
   "language_options": ["tr","en","ja","ko","zh-cn","zh-tw","de","fr","es","ru","ar","pt","id","vi","it","pl","nl","th","hi","fil"],
-  "font_options": ["NotoSans","WildWords","BadComic","MaShanZheng","KomikaJam","Bangers","Edo","RIDIBatang","Bushidoo","Hayah","Itim","MogulIrina","Heroika","Shonen"]
+  "font_options": ["NotoSans","WildWords","BadComic","MaShanZheng","KomikaJam","Bangers","Edo","RIDIBatang","Bushidoo","Hayah","Itim","MogulIrina","Heroika","Shonen","Kalam","HindSiliguri","ShantellSans","ShantellSansInformal","Vazirmatn","Pretendard","ZenMaruGothic","ChillRound","Cairo","Pangolin","Mansalva","PatrickHand","PoetsenOne","BalsamiqSans","LilitaOne","Estedad","Marhey","GveretLevin","Kodchasan","PoorStory","NanumPenScript","ZCOOLKuaiLe","Chilanka","Agbalumo","Atma","Koulen","YatraOne","AkayaKanadaka","Mogra","AnekOdia","Langar","Kavivanar","AkayaTelivigala","Yaldevi","AnekMalayalam","NotoSerifMyanmar","Phetsarath","KantumruyPro","Eeyek","GuruGomke","MontserratArmenian","FiraGO","Fredoka","AbyssinicaSIL","ScheherazadeNew","Iansui"],
+ "colorize_model": "muse",
+ "colorize_model_options": ["local","muse","gpt","grok","gemini"]
 }

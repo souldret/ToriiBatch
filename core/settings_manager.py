@@ -3,7 +3,7 @@ settings_manager.py - Uygulama ayarlarını yönetir.
 
 Sorumluluğu:
 - config/default_config.json'ı yüklemek ve kullanıcı ayarlarını
-  işletim sistemine uygun dizine (Windows: %APPDATA%/ToriiBatch/config.json) kaydetmek.
+    işletim sistemine uygun dizine (Windows: %APPDATA%/ToriiBatch/config.json) kaydetmek.
 - API anahtarı ve BYOK anahtarını Fernet (machine-specific türetilmiş anahtar) ile şifrelemek.
 - Ayarlar değiştiğinde settings_changed sinyali yayınlamak.
 - Translator listesi ve dil listesi gibi düzenlenebilir listeleri yönetmek.
@@ -435,6 +435,15 @@ class SettingsManager(QObject):
         langs = merged.get("language_options") or []
         if langs and lang not in langs:
             merged["target_lang"] = str(defaults.get("target_lang") or langs[0])
+
+        color_models = list(defaults.get("colorize_model_options") or [])
+        if color_models:
+            merged["colorize_model_options"] = color_models
+            chosen = str(merged.get("colorize_model") or "").strip().lower()
+            if chosen not in color_models:
+                merged["colorize_model"] = str(defaults.get("colorize_model") or color_models[0])
+            else:
+                merged["colorize_model"] = chosen
 
         return merged
 

@@ -12,7 +12,7 @@
 - **BYOK (Bring Your Own Key)** — OpenAI, OpenRouter, Google, Anthropic, DeepSeek, xAI veya yerel model anahtarı (`x-byok-*`, `x-byok-local-url`, `x-byok-fallback`) form alanında gönderilir.
 - **Düşünme çabası ve kaynak dil filtresi** — `reasoning_effort` (`none`/`low`/`medium`/`high`) ve `source_langs_whitelist` parametreleri desteklenir.
 - **Kullanım, anahtarlar ve kredi paylaşımı** — Son 30 günün istek sayıları (`/api/usage`), anahtar listesi (`/api/keys`) ve başka bir Torii hesabına kredi aktarımı (`/api/credits/share`).
-- **OCR, inpaint ve typeset** — Görsel çevirinin yanında metin tanıma, maske temizleme ve metin basma uçları.
+- **OCR, inpaint, typeset ve colorize** — Görsel çevirinin yanında metin tanıma, maske temizleme, metin basma ve siyah-beyaz renklendirme (`POST /api/colorize`, modeller: `local` / `muse` / `gpt` / `grok` / `gemini`) uçları.
 - **Çoklu model desteği** — Gemini, GPT, Claude, DeepSeek ve daha fazlası; model listesi ayarlardan düzenlenebilir.
 - **Özelleştirilebilir çıktı** — PNG/JPG/WebP format seçimi, inpainted (temiz) kopya kaydetme, orijinal yedekleme.
 - **Duraklat / Devam Et / İptal** — Çeviri sürecini kesintisiz yönetin.

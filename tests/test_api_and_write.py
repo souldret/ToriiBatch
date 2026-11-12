@@ -13,11 +13,16 @@ from core.translator_engine import _sniff_format, _write_image
 
 
 def test_font_codes() -> None:
-    assert _resolve_font_code("NotoSans") == "noto"
-    assert _resolve_font_code("KomikaJam") == "komika"
-    assert _resolve_font_code("Mogul Irina") == "mogul"
-    assert _resolve_font_code("RIDIBatang") == "ridi"
-    assert _resolve_font_code("noto") == "noto"
+ assert _resolve_font_code("NotoSans") == "noto"
+ assert _resolve_font_code("KomikaJam") == "komika"
+ assert _resolve_font_code("Mogul Irina") == "mogul"
+ assert _resolve_font_code("RIDIBatang") == "ridi"
+ assert _resolve_font_code("noto") == "noto"
+ assert _resolve_font_code("ShantellSansInformal") == "shantellsansinformal"
+ assert _resolve_font_code("ZCOOLKuaiLe") == "zcoolkuaile"
+ assert _resolve_font_code("AbyssinicaSIL") == "abyssinicasil"
+ assert _resolve_font_code("NotoSerifMyanmar") == "notoserifmyanmar"
+ assert _resolve_font_code("FiraGO") == "firago"
 
 
 def test_reconcile_replaces_removed_models() -> None:
@@ -217,6 +222,46 @@ def test_byok_validation_and_form_fields() -> None:
     local_missing = ToriiAPIClient("tt_test", byok_provider="local")
     assert local_missing.byok_error() is not None
 
+
+def test_colorize_rejects_unknown_model(tmp_path: Path) -> None:
+ img = tmp_path / "page.png"
+ img.write_bytes(b"\x89PNG\r\n\x1a\ncontent")
+ client = ToriiAPIClient("tt_test")
+ bad = asyncio.run(client.colorize_image(str(img), model="banana"))
+ assert bad["success"] is False
+ assert "colorize" in bad["error"].lower()
+
+ local = ToriiAPIClient("tt_test")
+ captured: dict[str, str] = {}
+
+ async def _fake_request(*_a, **kw):
+  captured.clear()
+  built = kw["data_factory"]()
+  captured.update({f[0]["name"]: f[2] for f in built._fields})
+  return 200, {"success": True, "image": "data:image/jpeg;base64,AA=="}, {}
+
+ local._request_with_retry = _fake_request  # type: ignore[method-assign]
+ asyncio.run(
+  local.colorize_image(str(img), model="local", prompt="red hair", byok_key="sk")
+ )
+ assert captured["colorize_model"] == "local"
+ assert "colorize_prompt" not in captured
+ assert "x-byok-openrouter" not in captured
+
+ muse = ToriiAPIClient("tt_test")
+ muse._request_with_retry = _fake_request  # type: ignore[method-assign]
+ long_prompt = "x" * 3000
+ asyncio.run(
+  muse.colorize_image(str(img), model="Muse", prompt=long_prompt, byok_key="or-key")
+ )
+ assert captured["colorize_model"] == "muse"
+ assert captured["x-byok-openrouter"] == "or-key"
+ assert len(captured["colorize_prompt"]) == 2100
+
+ grok = ToriiAPIClient("tt_test")
+ grok._request_with_retry = _fake_request  # type: ignore[method-assign]
+ asyncio.run(grok.colorize_image(str(img), model="grok", byok_key="xai-key"))
+ assert captured["x-byok-xai"] == "xai-key"
 
 def test_typeset_limits_validation(tmp_path: Path) -> None:
     img = tmp_path / "clean.png"
