@@ -33,7 +33,7 @@ def test_reconcile_replaces_removed_models() -> None:
         "translator_options": [
             "gemini-3.1-flash-lite",
             "gpt-6-luna",
-            "deepseek-v4-flash",
+            "deepseek-v4.1-flash",
             "claude-sonnet-5.5",
             "gpt-6.1-sol",
             "claude-opus-5.5",
@@ -75,7 +75,7 @@ def test_reconcile_replaces_removed_models() -> None:
     assert "claude-sonnet-5" not in result["translator_options"]
     assert "claude-sonnet-4.6" not in result["translator_options"]
     assert "deepseek" not in result["translator_options"]
-    assert "deepseek-v4-flash" in result["translator_options"]
+    assert "deepseek-v4.1-flash" in result["translator_options"]
     assert "my-custom-model" in result["translator_options"]
     assert "claude-opus-5.5" in result["translator_options"]
     assert "xx-custom" in result["language_options"]

@@ -40,7 +40,8 @@ _REMOVED_TRANSLATORS: dict[str, str] = {
     "claude-sonnet-4.6": "claude-sonnet-5.5",
     "claude-sonnet-5": "claude-sonnet-5.5",
     "gemini-3.6-flash": "gemini-3.8-flash",
-    "deepseek": "deepseek-v4-flash",
+    "deepseek": "deepseek-v4.1-flash",
+    "deepseek-v4-flash": "deepseek-v4.1-flash",
 }
 
 _CATALOG_KEYS = ("translator_options", "language_options", "font_options")

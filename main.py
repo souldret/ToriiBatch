@@ -14,6 +14,7 @@ import logging.handlers
 import os
 import platform
 import sys
+import threading
 import traceback
 from pathlib import Path
 
@@ -265,6 +266,27 @@ def main() -> None:
 
     window.show()
     logger.info("Ana pencere gösterildi.")
+
+    # ── Torii kataloğunu arka planda senkronize et ──
+    # Açılışta 1.5 sn bekle; ana pencere tamamen kurulsun. Ağ yavaşsa bile
+    # arayüz bloke olmaz (ayrı thread). Hata olursa mevcut liste korunur.
+    def _auto_sync_catalog() -> None:
+        try:
+            if not window._sm.get("auto_sync_catalog", True):
+                return
+            from core.catalog_sync import sync_catalog
+
+            result = sync_catalog(window._sm)
+            if result.success and (result.added_models or result.added_fonts):
+                logger.info(
+                    "Torii kataloğu otomatik güncellendi: %d yeni model, %d yeni font.",
+                    len(result.added_models), len(result.added_fonts),
+                )
+        except Exception as exc:
+            logger.warning("Otomatik katalog senkronizasyonu başarısız: %s", exc)
+
+    from PyQt6.QtCore import QTimer
+    QTimer.singleShot(1500, lambda: threading.Thread(target=_auto_sync_catalog, daemon=True).start())
 
     exit_code = app.exec()
     logger.info("Uygulama kapandı (çıkış kodu: %d).", exit_code)

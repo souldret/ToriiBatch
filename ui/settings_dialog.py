@@ -13,7 +13,7 @@ import logging
 import threading
 from pathlib import Path
 
-from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSlot
+from PyQt6.QtCore import QSize, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -191,11 +191,21 @@ class SettingsDialog(QDialog):
     4. Genel          — tema, güncelleme kontrolü
     """
 
+    # Worker thread'lerden ana thread'e güvenli sonuç iletimi için sinyaller.
+    # QTimer.singleShot worker thread'den çağrıldığında çalışmaz (event loop
+    # o thread'de yok); pyqtSignal ise otomatik olarak queued connection kullanır.
+    _credits_ready = pyqtSignal(object)
+    _api_result_ready = pyqtSignal(object, object)
+    _catalog_ready = pyqtSignal(object)
+
     def __init__(self, settings_manager, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._sm = settings_manager
         # İptal edilirse SettingsManager'a yazılmaması için geçici alan
         self._pending_output_folder: str | None = None
+        self._credits_ready.connect(self._show_credits_result)
+        self._api_result_ready.connect(lambda result, callback: callback(result))
+        self._catalog_ready.connect(self._show_sync_result)
         self.setWindowTitle("Ayarlar — ToriiBatch")
         self.setMinimumSize(780, 640)
         self.resize(900, 720)
@@ -730,6 +740,26 @@ class SettingsDialog(QDialog):
         layout.addWidget(_section_label("Güncellemeler"))
         self._check_updates = QCheckBox("Açılışta güncellemeleri kontrol et")
         layout.addWidget(self._check_updates)
+        self._auto_sync_catalog = QCheckBox(
+            "Açılışta Torii model listesini API'den otomatik güncelle"
+        )
+        self._auto_sync_catalog.setToolTip(
+            "Torii yeni bir çeviri modeli eklediğinde uygulamayı elle güncellemenize gerek kalmaz."
+        )
+        layout.addWidget(self._auto_sync_catalog)
+
+        sync_row = QHBoxLayout()
+        self._sync_catalog_btn = QPushButton("Modelleri Şimdi Güncelle")
+        self._sync_catalog_btn.setIcon(icon("fa5s.sync-alt"))
+        self._sync_catalog_btn.clicked.connect(self._on_sync_catalog)
+        sync_row.addWidget(self._sync_catalog_btn)
+        self._sync_catalog_result_lbl = QLabel("")
+        self._sync_catalog_result_lbl.setStyleSheet(
+            f"color: {Colors.TEXT_SECONDARY}; "
+            f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+        )
+        sync_row.addWidget(self._sync_catalog_result_lbl, 1)
+        layout.addLayout(sync_row)
 
         layout.addWidget(_separator())
 
@@ -843,6 +873,11 @@ class SettingsDialog(QDialog):
         theme = sm.get("theme", "dark")
         self._theme_combo.setCurrentIndex(1 if theme == "light" else 0)
         self._check_updates.setChecked(bool(sm.get("check_updates", True)))
+        self._auto_sync_catalog.setChecked(bool(sm.get("auto_sync_catalog", True)))
+        last_sync = str(sm.get("catalog_last_sync") or "").strip()
+        self._sync_catalog_result_lbl.setText(
+            f"Son güncelleme: {last_sync}" if last_sync else "Henüz güncellenmedi"
+        )
 
     # ------------------------------------------------------------------
     # Kaydet / İptal / Sıfırla
@@ -908,6 +943,7 @@ class SettingsDialog(QDialog):
         sm.set("language_options", self._language_list.get_items())
         sm.set("theme", "light" if self._theme_combo.currentText() == "Açık" else "dark")
         sm.set("check_updates", self._check_updates.isChecked())
+        sm.set("auto_sync_catalog", self._auto_sync_catalog.isChecked())
 
         sm.save()
         logger.info("Ayarlar kaydedildi.")
@@ -988,8 +1024,8 @@ class SettingsDialog(QDialog):
             finally:
                 loop.close()
 
-            # UI güncellemesini ana thread'de yap
-            QTimer.singleShot(0, lambda c=credits: self._show_credits_result(c))
+            # UI güncellemesini ana thread'de yap (queued signal)
+            self._credits_ready.emit(credits)
 
         threading.Thread(target=_fetch, daemon=True).start()
 
@@ -1005,6 +1041,55 @@ class SettingsDialog(QDialog):
             color = Colors.SUCCESS
         self._credits_result_lbl.setStyleSheet(
             f"color: {color}; "
+            f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+        )
+
+    @pyqtSlot()
+    def _on_sync_catalog(self) -> None:
+        """Torii API kataloğunu arka planda indirip ayarları günceller."""
+        self._sync_catalog_btn.setEnabled(False)
+        self._sync_catalog_result_lbl.setText("Güncelleniyor…")
+
+        def _fetch() -> None:
+            from core.catalog_sync import sync_catalog
+
+            result = sync_catalog(self._sm)
+            self._catalog_ready.emit(result)
+
+        threading.Thread(target=_fetch, daemon=True).start()
+
+    def _show_sync_result(self, result) -> None:
+        self._sync_catalog_btn.setEnabled(True)
+        if not result.success:
+            self._sync_catalog_result_lbl.setText(
+                f"Güncellenemedi: {result.error or 'bilinmeyen hata'}"
+            )
+            self._sync_catalog_result_lbl.setStyleSheet(
+                f"color: {Colors.ERROR}; "
+                f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
+            )
+            return
+
+        # Çeviri sekmesindeki combo'ları ve gelişmiş listeleri yenile
+        current_model = self._translator.currentText().strip()
+        self._translator.clear()
+        self._translator.addItems(self._sm.get_translator_options())
+        self._set_combo(self._translator, current_model)
+
+        current_font = self._font_combo.currentText().strip()
+        self._font_combo.clear()
+        self._font_combo.addItems(self._sm.get_font_options())
+        self._set_combo(self._font_combo, current_font)
+
+        self._translator_list.set_items(self._sm.get_translator_options())
+
+        added = len(result.added_models) + len(result.added_fonts)
+        self._sync_catalog_result_lbl.setText(
+            f"Güncellendi: {len(result.models)} model, {len(result.fonts)} font "
+            f"({added} yeni) — {self._sm.get('catalog_last_sync', '')}"
+        )
+        self._sync_catalog_result_lbl.setStyleSheet(
+            f"color: {Colors.SUCCESS}; "
             f"font-size: {Metrics.FONT_SIZE_SM}pt; background: transparent;"
         )
 
@@ -1039,7 +1124,7 @@ class SettingsDialog(QDialog):
                 result = {"success": False, "error": str(exc)}
             finally:
                 loop.close()
-            QTimer.singleShot(0, lambda r=result: on_result(r))
+            self._api_result_ready.emit(result, on_result)
 
         threading.Thread(target=_fetch, daemon=True).start()
 

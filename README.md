@@ -13,7 +13,8 @@
 - **Düşünme çabası ve kaynak dil filtresi** — `reasoning_effort` (`none`/`low`/`medium`/`high`) ve `source_langs_whitelist` parametreleri desteklenir.
 - **Kullanım, anahtarlar ve kredi paylaşımı** — Son 30 günün istek sayıları (`/api/usage`), anahtar listesi (`/api/keys`) ve başka bir Torii hesabına kredi aktarımı (`/api/credits/share`).
 - **OCR, inpaint, typeset ve colorize** — Görsel çevirinin yanında metin tanıma, maske temizleme, metin basma ve siyah-beyaz renklendirme (`POST /api/colorize`, modeller: `local` / `muse` / `gpt` / `grok` / `gemini`) uçları.
-- **Çoklu model desteği** — Gemini, GPT, Claude, DeepSeek ve daha fazlası; model listesi ayarlardan düzenlenebilir.
+- **Çoklu model desteği** — GPT-6 Luna, Claude Haiku/Sonnet/Opus 5.5, DeepSeek V4.1 Flash, Gemini 3.x/4 Carbon, Grok 4.20, Kimi K2.5 ve daha fazlası; model listesi ayarlardan düzenlenebilir.
+- **Otomatik katalog senkronizasyonu** — Açılışta toriitranslate.com/api sayfasından yeni modelleri ve fontları otomatik çeker; elle güncelleme gerekmez. Ayarlar > Genel > "Modelleri Şimdi Güncelle" ile manuel tetiklenebilir.
 - **Özelleştirilebilir çıktı** — PNG/JPG/WebP format seçimi, inpainted (temiz) kopya kaydetme, orijinal yedekleme.
 - **Duraklat / Devam Et / İptal** — Çeviri sürecini kesintisiz yönetin.
 - **Koyu / açık tema**, bölüm arama, log dışa aktarma, ETA, iş kuyruğu.
