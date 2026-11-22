@@ -695,10 +695,23 @@ class MainWindow(QMainWindow):
         queue_btn.setMinimumWidth(130)
         queue_btn.clicked.connect(self._on_queue_add)
 
+        # ---- Yeniden Dene (kalıcı) ----
+        # Hatalı sayfa oldukça footer'da görünür kalır; toast gibi kaybolmaz.
+        self._retry_btn = QPushButton("Yeniden Dene")
+        self._retry_btn.setIcon(make_icon("fa5s.redo", Colors.WARNING))
+        self._retry_btn.setProperty("class", "ctaSecondary")
+        self._retry_btn.setIconSize(QSize(14, 14))
+        self._retry_btn.setMinimumWidth(150)
+        self._retry_btn.setFont(font_btn)
+        self._retry_btn.setToolTip("Yalnızca hatalı sayfaları yeniden çevirir")
+        self._retry_btn.clicked.connect(self._retry_failed_pages)
+        self._retry_btn.hide()
+
         layout.addWidget(preview_btn)
         layout.addWidget(ocr_btn)
         layout.addWidget(queue_btn)
         layout.addStretch()
+        layout.addWidget(self._retry_btn)
         layout.addWidget(self._start_btn)
         layout.addWidget(self._pause_btn)
         layout.addWidget(self._cancel_btn)
@@ -1069,6 +1082,14 @@ class MainWindow(QMainWindow):
                 self._failed_page_paths[chapter_name] = []
             self._failed_page_paths[chapter_name].append(source_path)
 
+        # Hatalı sayfa varsa kalıcı "Yeniden Dene" butonunu güncelle
+        unique_failed = sum(
+            len(set(paths)) for paths in self._failed_page_paths.values()
+        )
+        if unique_failed:
+            self._retry_btn.setText(f"Yeniden Dene ({unique_failed})")
+            # Görünürlük _set_running_state tarafından yönetilir; çalışırken gizli kalır.
+
     @pyqtSlot()
     def _on_all_finished(self) -> None:
         # Kullanıcı iptali veya yeni iş başlamadan gelen gecikmiş sinyal
@@ -1122,12 +1143,11 @@ class MainWindow(QMainWindow):
                 duration_ms=10000,
             )
         else:
+            # Buton artık footer'da kalıcı; toast yalnızca bilgi verir.
             self._toast.show_message(
                 f"{max(0, success)} başarılı, {self._failed_pages} hatalı. "
-                "Hataları yeniden denemek için butona tıklayın.",
+                "Hatalı sayfaları yeniden çevirmek için alttaki 'Yeniden Dene' butonunu kullanın.",
                 icon="warning",
-                action_label="Yeniden Dene",
-                action_callback=self._retry_failed_pages,
                 duration_ms=15000,
             )
 
@@ -1195,30 +1215,26 @@ class MainWindow(QMainWindow):
 
         for chapter_name, failed_paths in self._failed_page_paths.items():
             original = chapter_map.get(chapter_name)
-            if original is None:
+            unique_paths = list(dict.fromkeys(failed_paths))  # tekrar sırasızı kaldır
+            if not unique_paths:
                 continue
-            # Sadece hatalı sayfaları içeren yeni bir ChapterInfo oluştur
+            # Sadece hatalı sayfaları içeren yeni bir ChapterInfo oluştur.
+            # Bölüm listede yoksa (klasör değiştiyse) yine de yolları kullan.
             retry_ch = ChapterInfo(
-                name=original.name,
-                path=original.path,
-                image_paths=list(dict.fromkeys(failed_paths)),  # tekrar sırasızı kaldır
-                page_count=len(dict.fromkeys(failed_paths)),
+                name=chapter_name,
+                path=original.path if original else "",
+                image_paths=unique_paths,
+                page_count=len(unique_paths),
                 status="pending",
             )
             retry_chapters.append(retry_ch)
 
         if not retry_chapters:
+            self._retry_btn.hide()
             return
 
         total_retry = sum(c.page_count for c in retry_chapters)
-        reply = QMessageBox.question(
-            self,
-            "Yeniden Dene",
-            f"{self._failed_pages} hatalı sayfa ({total_retry} benzersiz) yeniden çevrilecek.\nDevam edilsin mi?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+        # Onay kutusu yok: butona basıldığında iş doğrudan başlar.
 
         # Sayaçları yeniden dene moduna al
         self._done_pages        = 0
@@ -1349,6 +1365,10 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setEnabled(running)
         self._settings_btn.setEnabled(not running)
         self._source_drop.setEnabled(not running)
+        # Yeniden dene butonu yalnızca iş durmuşken ve hatalı sayfa varsa görünür.
+        self._retry_btn.setVisible(
+            not running and bool(self._failed_page_paths)
+        )
 
         if running:
             self._paused = False
